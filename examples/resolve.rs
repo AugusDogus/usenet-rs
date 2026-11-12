@@ -40,4 +40,7 @@ async fn main() {
             Err(e) => println!("{path}: {e}"),
         }
     }
+    for r in pool.report() {
+        println!("{r:?}");
+    }
 }

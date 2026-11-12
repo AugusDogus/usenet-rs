@@ -89,7 +89,11 @@ impl fmt::Display for NntpError {
 
 impl std::error::Error for NntpError {}
 
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
+/// Silence this long mid-command means the connection is dead.
+const IO_TIMEOUT: Duration = Duration::from_secs(20);
+/// Connecting, TLS, greeting, and login. A server at its connection limit can accept the
+/// socket and then say nothing, so this is short; the pool moves on to another server.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// How long a server that refused a connection or login is left alone.
 const BACKOFF: Duration = Duration::from_secs(60);
 
@@ -115,6 +119,17 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 impl Connection {
     pub async fn open(server: &Server) -> Result<Self, NntpError> {
         let label = format!("{}:{}", server.host, server.port);
+        timeout(CONNECT_TIMEOUT, Self::connect(server, &label)).await.map_err(|_| NntpError::Connect {
+            server: label.clone(),
+            reason: format!(
+                "no login within {}s; the server may be at its connection limit",
+                CONNECT_TIMEOUT.as_secs()
+            ),
+        })?
+    }
+
+    async fn connect(server: &Server, label: &str) -> Result<Self, NntpError> {
+        let label = label.to_string();
         let connect_error = |reason: String| NntpError::Connect { server: label.clone(), reason };
         let tcp = timeout(IO_TIMEOUT, TcpStream::connect((server.host.as_str(), server.port)))
             .await
@@ -223,7 +238,36 @@ impl Connection {
 struct Slot {
     server: Server,
     state: Mutex<SlotState>,
+    counters: Counters,
 }
+
+#[derive(Default)]
+struct Counters {
+    answered: AtomicU64,
+    missing: AtomicU64,
+    failed: AtomicU64,
+    /// Connections that could not be opened.
+    refused: AtomicU64,
+    /// Answers slower than [`SLOW`].
+    slow: AtomicU64,
+    millis: AtomicU64,
+}
+
+/// How one server has served this pool, for diagnosing slow or failing servers.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ServerReport {
+    pub host: String,
+    pub answered: u64,
+    pub missing: u64,
+    pub failed: u64,
+    pub refused: u64,
+    pub slow: u64,
+    /// Mean time per answered or missing request.
+    pub mean_millis: u64,
+    pub last_error: Option<String>,
+}
+
+const SLOW: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct SlotState {
@@ -266,7 +310,10 @@ enum Answer {
 impl Pool {
     pub fn new(mut servers: Vec<Server>) -> Self {
         servers.sort_by_key(|s| s.priority);
-        let slots = servers.into_iter().map(|server| Slot { server, state: Mutex::default() }).collect();
+        let slots = servers
+            .into_iter()
+            .map(|server| Slot { server, state: Mutex::default(), counters: Counters::default() })
+            .collect();
         Self(Arc::new(PoolInner { slots, freed: Notify::new(), bytes: AtomicU64::new(0), articles: AtomicU64::new(0) }))
     }
 
@@ -277,6 +324,28 @@ impl Pool {
             articles: self.0.articles.load(Ordering::Relaxed),
             connections,
         }
+    }
+
+    pub fn report(&self) -> Vec<ServerReport> {
+        self.0
+            .slots
+            .iter()
+            .map(|s| {
+                let c = &s.counters;
+                let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+                let timed = load(&c.answered) + load(&c.missing);
+                ServerReport {
+                    host: s.server.host.clone(),
+                    answered: load(&c.answered),
+                    missing: load(&c.missing),
+                    failed: load(&c.failed),
+                    refused: load(&c.refused),
+                    slow: load(&c.slow),
+                    mean_millis: load(&c.millis).checked_div(timed).unwrap_or(0),
+                    last_error: s.state.lock().unwrap().last_error.clone(),
+                }
+            })
+            .collect()
     }
 
     /// The most connections the pool would open.
@@ -309,6 +378,7 @@ impl Pool {
         let mut missing = false;
         let mut failures = 0;
         while let Some((slot, mut conn)) = self.acquire(&tried).await {
+            let asked = Instant::now();
             let result = match op {
                 Op::Body(id) => conn.body(id).await.map(Answer::Body),
                 Op::Stat(id) => match conn.stat(id).await {
@@ -317,6 +387,21 @@ impl Pool {
                     Err(e) => Err(e),
                 },
             };
+            let counters = &self.0.slots[slot].counters;
+            let took = asked.elapsed();
+            if took >= SLOW {
+                counters.slow.fetch_add(1, Ordering::Relaxed);
+            }
+            match &result {
+                Ok(_) | Err(NntpError::Missing { .. }) => {
+                    let count = if result.is_ok() { &counters.answered } else { &counters.missing };
+                    count.fetch_add(1, Ordering::Relaxed);
+                    counters.millis.fetch_add(took.as_millis() as u64, Ordering::Relaxed);
+                }
+                Err(_) => {
+                    counters.failed.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             let error = match result {
                 Ok(answer) => {
                     self.release(slot, conn);
@@ -386,6 +471,7 @@ impl Pool {
             match Connection::open(&slot.server).await {
                 Ok(conn) => return Some((i, conn)),
                 Err(e) => {
+                    slot.counters.refused.fetch_add(1, Ordering::Relaxed);
                     let mut state = slot.state.lock().unwrap();
                     state.open -= 1;
                     state.backoff_until = Some(Instant::now() + BACKOFF);
