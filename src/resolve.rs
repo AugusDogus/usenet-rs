@@ -14,13 +14,30 @@ use crate::rar::{self, Format, RarError, Volume};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ResolveError {
-    Article { file: String, error: ArticleError },
+    Article {
+        file: String,
+        error: ArticleError,
+    },
     /// The articles do not add up to the file their headers describe.
-    Layout { file: String, reason: String },
-    Rar { file: String, reason: String },
-    Compressed { name: String },
-    Encrypted { name: String },
-    Incomplete { name: String, found: u64, expected: u64 },
+    Layout {
+        file: String,
+        reason: String,
+    },
+    Rar {
+        file: String,
+        reason: String,
+    },
+    Compressed {
+        name: String,
+    },
+    Encrypted {
+        name: String,
+    },
+    Incomplete {
+        name: String,
+        found: u64,
+        expected: u64,
+    },
     Empty,
 }
 
@@ -89,7 +106,9 @@ impl Probed<'_> {
 async fn probe<'a>(pool: &Pool, index: usize, file: &'a NzbFile) -> Result<Option<Probed<'a>>, ResolveError> {
     let label = || label(file, index);
     let first = &file.segments[0];
-    let part = article::fetch(pool, &first.message_ids).await.map_err(|error| ResolveError::Article { file: label(), error })?;
+    let part = article::fetch(pool, &first.message_ids)
+        .await
+        .map_err(|error| ResolveError::Article { file: label(), error })?;
     if part.data.starts_with(PAR2) {
         return Ok(None);
     }
@@ -306,7 +325,7 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
             return Err(e);
         }
         let scans = join_all(rars.iter().map(|p| async move {
-            let scan = rar::scan(p.head.clone(), p.size, async |at: u64, len: usize| p.read(pool, at, len).await).await;
+            let scan = rar::scan(p.head.clone(), p.size, |at, len| p.read(pool, at, len)).await;
             (scan, *p)
         }))
         .await;
@@ -342,6 +361,13 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolving_can_move_between_threads() {
+        fn send<T: Send>(_: T) {}
+        let nzb = Nzb { meta: Vec::new(), files: Vec::new(), sha1: [0; 20] };
+        send(resolve(&nzb, &Pool::new(Vec::new())));
+    }
 
     #[test]
     fn hex_like_names_are_obfuscated() {

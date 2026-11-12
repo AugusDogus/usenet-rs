@@ -45,13 +45,31 @@ impl fmt::Debug for Server {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NntpError {
     /// No configured server has the article; it expired or was taken down.
-    Missing { message_id: String },
-    Connect { server: String, reason: String },
-    Login { server: String, reply: String },
-    Reply { server: String, command: &'static str, reply: String },
-    Io { server: String, reason: String },
+    Missing {
+        message_id: String,
+    },
+    Connect {
+        server: String,
+        reason: String,
+    },
+    Login {
+        server: String,
+        reply: String,
+    },
+    Reply {
+        server: String,
+        command: &'static str,
+        reply: String,
+    },
+    Io {
+        server: String,
+        reason: String,
+    },
     /// Every server failed to answer for a reason other than a missing article.
-    Unreachable { message_id: String, servers: String },
+    Unreachable {
+        message_id: String,
+        servers: String,
+    },
 }
 
 impl fmt::Display for NntpError {

@@ -137,11 +137,8 @@ fn block5(b: &[u8], at: usize) -> Result<(Block, u64), Stop> {
     let block = match kind {
         1 => {
             let archive_flags = r.vint()?;
-            let number = if archive_flags & 0x2 != 0 {
-                Some(r.vint()?)
-            } else {
-                (archive_flags & 0x1 != 0).then_some(0)
-            };
+            let number =
+                if archive_flags & 0x2 != 0 { Some(r.vint()?) } else { (archive_flags & 0x1 != 0).then_some(0) };
             Block::Main { number, first: number.map(|n| n == 0), encrypted: false }
         }
         2 => {
@@ -237,11 +234,11 @@ fn block4(b: &[u8], at: usize) -> Result<(Block, u64), Stop> {
 /// Walks the block headers of a volume of `size` bytes. `head` is its start, usually the
 /// first article; headers past it, such as a file that starts mid-volume after a sample,
 /// are read through `read` in small windows, so file data is never fetched.
-pub async fn scan<E>(
-    head: Vec<u8>,
-    size: u64,
-    mut read: impl AsyncFnMut(u64, usize) -> Result<Vec<u8>, E>,
-) -> Result<Volume, RarError<E>> {
+pub async fn scan<E, F, Fut>(head: Vec<u8>, size: u64, mut read: F) -> Result<Volume, RarError<E>>
+where
+    F: FnMut(u64, usize) -> Fut,
+    Fut: Future<Output = Result<Vec<u8>, E>>,
+{
     let format = format_of(&head).ok_or(RarError::NotRar)?;
     let parse = match format {
         Format::Rar5 => block5,
@@ -385,9 +382,9 @@ mod tests {
 
     async fn scan_all(volume: &[u8], head: usize) -> (Result<Volume, RarError<()>>, Vec<u64>) {
         let mut reads = Vec::new();
-        let r = scan(volume[..head].to_vec(), volume.len() as u64, async |at: u64, len: usize| {
+        let r = scan(volume[..head].to_vec(), volume.len() as u64, |at: u64, len: usize| {
             reads.push(at);
-            Ok::<_, ()>(volume[at as usize..at as usize + len].to_vec())
+            std::future::ready(Ok::<_, ()>(volume[at as usize..at as usize + len].to_vec()))
         })
         .await;
         (r, reads)
@@ -406,8 +403,11 @@ mod tests {
         let (v, reads) = scan_all(&volume, 64).await;
         let v = v.unwrap();
         assert_eq!(v.number, Some(4));
-        let summary: Vec<_> =
-            v.entries.iter().map(|e| (e.name.as_str(), e.stored, e.split_before, e.split_after, e.packed_size)).collect();
+        let summary: Vec<_> = v
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.stored, e.split_before, e.split_after, e.packed_size))
+            .collect();
         assert_eq!(summary, [("!Sample.mkv", true, true, false, 300), ("Movie.mkv", true, false, true, 500)]);
         let movie = &v.entries[1];
         assert_eq!(&volume[movie.data_offset as usize - 9..movie.data_offset as usize], b"Movie.mkv");

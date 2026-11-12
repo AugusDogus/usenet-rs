@@ -36,7 +36,9 @@ impl fmt::Display for YencError {
             Self::Length { name, expected, actual } => {
                 write!(f, "yEnc data for {name:?} decoded to {actual} bytes, expected {expected}")
             }
-            Self::Crc { name, begin } => write!(f, "yEnc CRC mismatch for {name:?} at byte {begin}; the article is corrupt"),
+            Self::Crc { name, begin } => {
+                write!(f, "yEnc CRC mismatch for {name:?} at byte {begin}; the article is corrupt")
+            }
         }
     }
 }
@@ -184,7 +186,10 @@ pub(crate) fn encode(data: &[u8], name: &str, file_size: u64, begin: u64, part: 
             col = 0;
         }
     }
-    out.extend(format!("\r\n=yend size={} part={} pcrc32={:08x}\r\n", data.len(), part.unwrap_or(1), crc32fast::hash(data)).bytes());
+    out.extend(
+        format!("\r\n=yend size={} part={} pcrc32={:08x}\r\n", data.len(), part.unwrap_or(1), crc32fast::hash(data))
+            .bytes(),
+    );
     out
 }
 

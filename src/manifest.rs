@@ -105,7 +105,13 @@ impl Posted<'_> {
                 let begin = i * self.part_size;
                 let seg_end = (begin + self.part_size).min(self.size);
                 let (lo, hi) = (begin.max(from), seg_end.min(end));
-                (lo < hi).then(|| Piece { ids: ids.clone(), offset: at + (lo - from), length: hi - lo, begin, skip: lo - begin })
+                (lo < hi).then(|| Piece {
+                    ids: ids.clone(),
+                    offset: at + (lo - from),
+                    length: hi - lo,
+                    begin,
+                    skip: lo - begin,
+                })
             })
             .collect()
     }
