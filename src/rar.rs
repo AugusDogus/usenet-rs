@@ -349,6 +349,7 @@ pub(crate) mod fixtures {
     }
 
     /// `split` uses RAR4 flags: 0x1 before, 0x2 after. `method` 0x30 is stored.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn rar4(first: bool, files: &[File<'_>], fill: u8) -> Vec<u8> {
         let mut out = b"Rar!\x1a\x07\x00".to_vec();
         out.extend([0, 0, 0x73]);

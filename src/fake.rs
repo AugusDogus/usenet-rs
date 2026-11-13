@@ -24,11 +24,17 @@ pub struct Posting {
 }
 
 impl Posting {
-    /// Posts `files` as they are, `part_size` bytes per article. Message-IDs derive from
-    /// `title`, so postings with different titles never share an article.
+    /// Posts `files` as they are, `part_size` bytes per article. Message-IDs derive from the
+    /// title and the files, so two different postings never share an article.
     pub fn new(title: &str, files: &[(&str, &[u8])], part_size: usize) -> Self {
         assert!(part_size > 0, "articles hold at least one byte");
-        let tag: String = title.bytes().map(|b| format!("{b:02x}")).collect();
+        let mut digest = crc32fast::Hasher::new();
+        digest.update(title.as_bytes());
+        for (name, data) in files {
+            digest.update(name.as_bytes());
+            digest.update(data);
+        }
+        let tag = format!("{:08x}{:x}", digest.finalize(), files.iter().map(|(_, d)| d.len()).sum::<usize>());
         let mut nzb = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         nzb.push_str("<nzb xmlns=\"http://www.newzbin.com/DTD/2003/nzb\">\n");
         nzb.push_str(&format!("<head><meta type=\"name\">{}</meta></head>\n", escape(title)));
