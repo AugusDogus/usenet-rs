@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Reads Usenet releases as files: NNTP, yEnc, NZB, and stored RAR layouts"
 
+[features]
+# A loopback NNTP server and postings, for tests.
+fake = []
+
 [dependencies]
 crc32fast = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

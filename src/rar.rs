@@ -292,7 +292,7 @@ where
     Ok(volume)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fake"))]
 pub(crate) mod fixtures {
     pub struct File<'a> {
         pub name: &'a str,

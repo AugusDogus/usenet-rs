@@ -161,7 +161,8 @@ pub fn decode(body: &[u8]) -> Result<Part, YencError> {
     Ok(Part { name, file_size, begin, data })
 }
 
-#[cfg(test)]
+/// Encodes one article, for tests.
+#[cfg(any(test, feature = "fake"))]
 pub(crate) fn encode(data: &[u8], name: &str, file_size: u64, begin: u64, part: Option<u32>) -> Vec<u8> {
     let mut out = Vec::new();
     match part {

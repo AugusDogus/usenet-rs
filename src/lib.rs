@@ -3,6 +3,8 @@
 //! every article onto the files a user sees, so any byte range can be fetched on demand.
 
 pub mod article;
+#[cfg(any(test, feature = "fake"))]
+pub mod fake;
 pub mod manifest;
 pub mod nntp;
 pub mod nzb;

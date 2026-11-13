@@ -348,9 +348,17 @@ impl Pool {
             .collect()
     }
 
-    /// The most connections the pool would open.
+    /// The most connections the pool uses at once: those of its largest priority tier, since
+    /// a lower tier is only asked for what the tiers above it lack.
     pub fn capacity(&self) -> usize {
-        self.0.slots.iter().map(|s| usize::from(s.server.connections)).sum()
+        let mut tiers: Vec<(i32, usize)> = Vec::new();
+        for s in &self.0.slots {
+            match tiers.last_mut() {
+                Some((priority, total)) if *priority == s.server.priority => *total += usize::from(s.server.connections),
+                _ => tiers.push((s.server.priority, usize::from(s.server.connections))),
+            }
+        }
+        tiers.into_iter().map(|(_, total)| total).max().unwrap_or(0)
     }
 
     pub async fn body(&self, message_id: &str) -> Result<Vec<u8>, NntpError> {
@@ -437,21 +445,27 @@ impl Pool {
         }
     }
 
-    /// A connection to the first usable server not yet tried. None once every server was tried.
+    /// A connection to a usable server not yet tried, from the best priority tier that has
+    /// one: a busy tier is waited for rather than skipped, so backup servers only see articles
+    /// the servers above them lack, or requests while those servers are refusing connections.
+    /// None once every server was tried.
     async fn acquire(&self, tried: &[bool]) -> Option<(usize, Connection)> {
         loop {
             let freed = self.0.freed.notified();
             tokio::pin!(freed);
             freed.as_mut().enable();
             let now = Instant::now();
-            let mut usable = false;
+            let mut tier = None;
             let mut to_open = None;
             for (i, slot) in self.0.slots.iter().enumerate() {
                 let mut state = slot.state.lock().unwrap();
                 if tried[i] || state.backoff_until.is_some_and(|t| t > now) {
                     continue;
                 }
-                usable = true;
+                // Slots are sorted by priority, so the first usable one names the tier.
+                if *tier.get_or_insert(slot.server.priority) != slot.server.priority {
+                    break;
+                }
                 if let Some(conn) = state.idle.pop() {
                     return Some((i, conn));
                 }
@@ -460,7 +474,7 @@ impl Pool {
                     to_open = Some(i);
                 }
             }
-            if !usable {
+            if tier.is_none() {
                 return None;
             }
             let Some(i) = to_open else {
@@ -493,5 +507,56 @@ impl Pool {
         }
         drop(state);
         self.0.freed.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake::{FakeServer, Posting};
+
+    fn posting() -> Posting {
+        let data: Vec<u8> = (0..40_000u32).map(|i| (i % 253) as u8).collect();
+        Posting::new("tiers", &[("a.bin", &data)], 1000)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_busy_primary_is_waited_for_and_a_backup_only_serves_what_it_lacks() {
+        let (primary, backup) = (FakeServer::start(), FakeServer::start());
+        let posting = posting();
+        primary.add(&posting);
+        backup.add(&posting);
+        let pool = Pool::new(vec![backup.config(4, 1), primary.config(2, 0)]);
+        assert_eq!(pool.capacity(), 4);
+        let ids: Vec<&str> = posting.ids().collect();
+        let bodies = futures_util::future::join_all(ids.iter().map(|id| pool.body(id))).await;
+        assert!(bodies.iter().all(Result::is_ok));
+        assert_eq!((primary.bodies(), backup.bodies()), (ids.len() as u64, 0));
+
+        primary.remove(ids[0]);
+        pool.body(ids[0]).await.unwrap();
+        assert_eq!((backup.served(ids[0]), backup.bodies()), (1, 1));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refusing_primary_hands_its_requests_to_the_backup() {
+        let (primary, backup) = (FakeServer::start(), FakeServer::start());
+        let posting = posting();
+        primary.add(&posting);
+        backup.add(&posting);
+        primary.set_down(true);
+        let pool = Pool::new(vec![primary.config(2, 0), backup.config(2, 1)]);
+        let id = posting.ids().next().unwrap();
+        pool.body(id).await.unwrap();
+        assert_eq!(backup.served(id), 1);
+        assert_eq!(pool.report()[0].refused, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_article_on_no_server_is_missing() {
+        let server = FakeServer::start();
+        let pool = Pool::new(vec![server.config(1, 0)]);
+        assert!(matches!(pool.body("nope@x").await, Err(NntpError::Missing { .. })));
+        assert!(!pool.stat("nope@x").await.unwrap());
     }
 }

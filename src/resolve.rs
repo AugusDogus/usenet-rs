@@ -369,6 +369,66 @@ mod tests {
         send(resolve(&nzb, &Pool::new(Vec::new())));
     }
 
+    /// Every byte of every output file, read back through the manifest.
+    async fn read_back(manifest: &Manifest, pool: &Pool) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        for file in &manifest.files {
+            let mut bytes = Vec::new();
+            for piece in &file.pieces {
+                let part = article::fetch(pool, &piece.ids).await.unwrap();
+                assert_eq!(part.begin, piece.begin);
+                bytes.extend_from_slice(&part.data[piece.skip as usize..(piece.skip + piece.length) as usize]);
+            }
+            out.push((file.path.clone(), bytes));
+        }
+        out
+    }
+
+    fn data(len: usize, seed: u32) -> Vec<u8> {
+        (0..len as u32).map(|i| (i.wrapping_mul(31).wrapping_add(seed) % 251) as u8).collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_direct_posting_resolves_to_its_files() {
+        use crate::fake::{FakeServer, Posting};
+        let (a, b) = (data(25_000, 1), data(3_000, 2));
+        let posting = Posting::new("Set", &[("a.bin", &a), ("b.bin", &b), ("set.par2", b"PAR2\0PKT")], 4_000);
+        let server = FakeServer::start();
+        server.add(&posting);
+        let pool = Pool::new(vec![server.config(4, 0)]);
+        let manifest = resolve(&Nzb::parse(&posting.nzb).unwrap(), &pool).await.unwrap();
+        assert_eq!((manifest.title.as_str(), manifest.packing), ("Set", Packing::Direct));
+        assert_eq!(read_back(&manifest, &pool).await, [("a.bin".into(), a), ("b.bin".into(), b)]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stored_rar_set_resolves_to_the_file_inside() {
+        use crate::fake::{FakeServer, Posting};
+        let movie = data(50_000, 3);
+        let posting = Posting::stored_rar("Film.2024", "Film.2024.mkv", &movie, 12_000, 5_000);
+        let server = FakeServer::start();
+        server.add(&posting);
+        let pool = Pool::new(vec![server.config(4, 0)]);
+        let manifest = resolve(&Nzb::parse(&posting.nzb).unwrap(), &pool).await.unwrap();
+        assert_eq!(manifest.packing, Packing::Rar { format: RarFormat::Rar5, volumes: 5 });
+        let files = read_back(&manifest, &pool).await;
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, ["Sample/sample.mkv", "Film.2024.mkv"]);
+        assert_eq!(files[1].1, movie);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_expired_volume_sinks_the_set() {
+        use crate::fake::{FakeServer, Posting};
+        let posting = Posting::stored_rar("Gone", "Gone.mkv", &data(30_000, 4), 12_000, 5_000);
+        let server = FakeServer::start();
+        server.add(&posting);
+        server.remove(&posting.files[1].1[0]);
+        let pool = Pool::new(vec![server.config(4, 0)]);
+        let error = resolve(&Nzb::parse(&posting.nzb).unwrap(), &pool).await.unwrap_err();
+        assert!(matches!(&error, ResolveError::Article { error, .. } if error.is_missing()), "{error}");
+    }
+
     #[test]
     fn hex_like_names_are_obfuscated() {
         assert!(obfuscated("WKelZy6vZNnOttA6eYVWoHhVEfnbknre.mkv"));
