@@ -354,7 +354,9 @@ impl Pool {
         let mut tiers: Vec<(i32, usize)> = Vec::new();
         for s in &self.0.slots {
             match tiers.last_mut() {
-                Some((priority, total)) if *priority == s.server.priority => *total += usize::from(s.server.connections),
+                Some((priority, total)) if *priority == s.server.priority => {
+                    *total += usize::from(s.server.connections)
+                }
                 _ => tiers.push((s.server.priority, usize::from(s.server.connections))),
             }
         }
@@ -474,9 +476,8 @@ impl Pool {
                     to_open = Some(i);
                 }
             }
-            if tier.is_none() {
-                return None;
-            }
+            // No tier means every server was tried or is refusing connections.
+            tier?;
             let Some(i) = to_open else {
                 freed.await;
                 continue;
