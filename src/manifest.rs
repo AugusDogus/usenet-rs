@@ -1,5 +1,5 @@
 //! A resolved release: its output files, and which bytes of which article land where.
-//! It plays the part a `.torrent` file plays for BitTorrent, and is stored the same way.
+//! The engine stores it with each download and reads it back on every resume.
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ pub const FORMAT: u32 = 1;
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Manifest {
     pub format: u32,
-    /// SHA-1 of the NZB, in hex. It names the release, as an infohash names a torrent.
+    /// SHA-1 of the NZB, in hex. It names the download.
     pub nzb_sha1: String,
     pub title: String,
     pub packing: Packing,
