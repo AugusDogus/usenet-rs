@@ -1,10 +1,10 @@
 //! Resolves NZB files against real servers and prints each manifest's files.
 //!
-//! cargo run -p torrential-usenet --example resolve -- servers.json a.nzb [b.nzb ...]
+//! cargo run -p newsreel-usenet --example resolve -- servers.json a.nzb [b.nzb ...]
 //!
 //! `servers.json` holds `{"servers": [{host, port, username, password, ...}]}`.
 
-use torrential_usenet::{Nzb, Pool, Server, resolve};
+use newsreel_usenet::{Nzb, Pool, Server, resolve};
 
 #[derive(serde::Deserialize)]
 struct Servers {
