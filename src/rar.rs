@@ -36,7 +36,8 @@ pub struct Entry {
     pub split_before: bool,
     /// The file continues in the next volume.
     pub split_after: bool,
-    /// CRC32 the archive records for this volume's chunk (RAR4) or the whole file (RAR5).
+    /// CRC32 of this volume's part of the data when the file continues in the next volume,
+    /// otherwise of the whole file. RAR5 records a keyed checksum for encrypted files.
     pub crc32: Option<u32>,
 }
 
@@ -843,5 +844,101 @@ mod tests {
         volume.extend(file);
         let r = scan_all(&volume, volume.len()).await.0;
         assert_eq!(r, Err(ScanError::Rar(RarError::Malformed { at: 20, defect: Defect::Overrun })));
+    }
+
+    /// xorshift64*, so the mutation test is the same on every run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    fn mutate(rng: &mut Rng, bytes: &mut Vec<u8>) {
+        let at = rng.below(bytes.len());
+        match rng.below(5) {
+            0 => {
+                if let Some(b) = bytes.get_mut(at) {
+                    *b ^= 1 << rng.below(8);
+                }
+            }
+            1 => {
+                if let Some(b) = bytes.get_mut(at) {
+                    *b = [0x00, 0x01, 0x7f, 0x80, 0xff][rng.below(5)];
+                }
+            }
+            2 => bytes.truncate(at),
+            3 => {
+                let chunk: Vec<u8> = bytes.iter().skip(rng.below(bytes.len())).take(rng.below(64)).copied().collect();
+                bytes.splice(at..at, chunk);
+            }
+            _ => {
+                let value = [u32::MAX, 0x8000_0000, 0xffff, 0x7fff_ffff][rng.below(4)].to_le_bytes();
+                for (b, v) in bytes.iter_mut().skip(at).zip(value) {
+                    *b = v;
+                }
+            }
+        }
+    }
+
+    /// Mutations of real volumes, with checksums verified and skipped so the parsers behind
+    /// them are reached: no panic, no overflow, and reads only ever move forward through the
+    /// bytes that exist, so every scan ends.
+    #[tokio::test]
+    async fn mutated_volumes_never_panic_or_loop() {
+        let fixtures: [&[u8]; 6] = [
+            include_bytes!("../tests/data/rar/rar4/multi_dirs_unicode/arc.rar"),
+            include_bytes!("../tests/data/rar/rar4/comment_rr/arc.part1.rar"),
+            include_bytes!("../tests/data/rar/rar4/enc_headers/arc.part2.rar"),
+            include_bytes!("../tests/data/rar/rar5/late_header/arc.rar"),
+            include_bytes!("../tests/data/rar/rar5/quickopen/arc.part3.rar"),
+            include_bytes!("../tests/data/rar/rar5/enc_data/arc.part1.rar"),
+        ];
+        let mut outcomes = [0usize; 2];
+        for (k, original) in fixtures.iter().enumerate() {
+            let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ k as u64);
+            for i in 0..500 {
+                let mut bytes = original.to_vec();
+                for _ in 0..=rng.below(3) {
+                    mutate(&mut rng, &mut bytes);
+                }
+                let size = match rng.below(4) {
+                    0 => bytes.len() as u64 + rng.below(1 << 20) as u64,
+                    1 => u64::MAX,
+                    _ => bytes.len() as u64,
+                };
+                let head = bytes[..bytes.len().min(rng.below(3000))].to_vec();
+                let checksums = if i % 2 == 0 { Checksums::Skip } else { Checksums::Verify };
+                let mut reads = Vec::new();
+                let r = walk(
+                    head,
+                    size,
+                    |at: u64, len: usize| {
+                        assert!(len <= WINDOW);
+                        reads.push(at);
+                        let from = usize::try_from(at).unwrap_or(usize::MAX).min(bytes.len());
+                        std::future::ready(Ok::<_, ()>(bytes[from..bytes.len().min(from + len)].to_vec()))
+                    },
+                    checksums,
+                )
+                .await;
+                assert!(reads.windows(2).all(|w| w[0] < w[1]), "fixture {k}, run {i}: reads {reads:?}");
+                assert!(reads.len() <= bytes.len() + 1, "fixture {k}, run {i}");
+                if let Ok(volume) = r {
+                    for e in &volume.entries {
+                        assert!(e.data_offset.checked_add(e.packed_size).is_some_and(|end| end <= size));
+                    }
+                }
+                outcomes[i % 2] += 1;
+            }
+        }
+        assert_eq!(outcomes, [1500, 1500]);
     }
 }

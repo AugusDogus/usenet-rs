@@ -432,4 +432,58 @@ mod tests {
         assert_eq!(manifest.files[0].pieces[0].ids, ["a@x", "b@x"]);
         assert_eq!(manifest.to_bytes(), stored);
     }
+
+    /// Mutations of a real manifest never panic, and whatever parses keeps its promises.
+    #[test]
+    fn mutated_manifests_never_panic() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n.max(1) as u64) as usize
+        };
+        let segments: Vec<Vec<String>> = (0..40).map(|i| vec![format!("{i}@x"), format!("{i}b@x")]).collect();
+        let posted = Posted { size: 3_950, part_size: 100, segments: &segments };
+        let original = Manifest {
+            nzb_sha1: "ab".repeat(20),
+            title: "Film.2024".into(),
+            packing: Packing::Rar { format: RarFormat::Rar5, volumes: 2 },
+            files: vec![
+                OutputFile { path: "Sample/s.mkv".into(), size: 1_000, pieces: posted.pieces(50, 1_000, 0) },
+                OutputFile { path: "Film.2024.mkv".into(), size: 2_000, pieces: posted.pieces(1_100, 2_000, 0) },
+            ],
+        }
+        .to_bytes();
+        let numbers: [&[u8]; 4] = [b"18446744073709551615", b"18446744073709551616", b"-1", b"0"];
+        let mut parsed = 0;
+        for _ in 0..3_000 {
+            let mut bytes = original.clone();
+            for _ in 0..=next(3) {
+                if bytes.is_empty() {
+                    break;
+                }
+                let at = next(bytes.len());
+                match next(4) {
+                    0 => bytes[at] ^= 1 << next(8),
+                    1 => bytes.truncate(at),
+                    2 => {
+                        // Replace a run of digits, if one starts here, with an extreme number.
+                        let end = at + bytes[at..].iter().take_while(|b| b.is_ascii_digit()).count();
+                        bytes.splice(at..end, numbers[next(numbers.len())].iter().copied());
+                    }
+                    _ => bytes[at] = b"{}[]\",:0"[next(8)],
+                }
+            }
+            if let Ok(manifest) = Manifest::from_bytes(&bytes) {
+                parsed += 1;
+                assert_eq!(Manifest::from_bytes(&manifest.to_bytes()), Ok(manifest.clone()));
+                for file in &manifest.files {
+                    assert!(safe_path(&file.path));
+                    assert_eq!(tile(file), Ok(()));
+                }
+            }
+        }
+        assert!(parsed > 0, "some mutations, such as digits within an ID, still parse");
+    }
 }
