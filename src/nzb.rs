@@ -286,12 +286,10 @@ enum Target {
     Segment { number: u32, bytes: u64 },
 }
 
-/// The attributes of `e`. Duplicates are not reported: only the first of each name is read,
-/// and checking costs an allocation per element.
+/// The attributes of `e` that parse. A repeated name counts as not parsing, even when the
+/// first one did not parse either.
 fn attributes<'a>(e: &'a BytesStart<'_>) -> impl Iterator<Item = Attribute<'a>> {
-    let mut attributes = e.attributes();
-    attributes.with_checks(false);
-    attributes.flatten()
+    e.attributes().flatten()
 }
 
 /// The normalized value of the first attribute named `name`.
@@ -410,6 +408,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(nzb.files[0].segments, [Segment { number: 1, bytes: 0, message_ids: vec!["b@x".into()] }]);
+        // A number repeated after a malformed one is a duplicate, so neither counts.
+        let doc = br#"<nzb><file subject="x"><segment number=n number="4">a@x</segment></file></nzb>"#;
+        assert!(matches!(Nzb::parse(doc), Err(NzbError::NoFiles { files: 1 })));
     }
 
     fn sample(name: &str) -> Vec<u8> {
