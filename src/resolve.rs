@@ -416,6 +416,7 @@ fn rar_files(
 ///     username: "user".into(),
 ///     password: "secret".into(),
 ///     connections: 8,
+///     pipeline: Server::DEFAULT_PIPELINE,
 ///     priority: 0,
 /// }]);
 /// let nzb = Nzb::parse(&std::fs::read("release.nzb")?)?;
