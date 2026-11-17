@@ -26,8 +26,9 @@ pub const FORMAT: u32 = 1;
 /// A release resolved into the files a user sees and the article pieces behind them.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Manifest {
-    /// SHA-1 of the NZB, in hex. It names the download.
-    pub nzb_sha1: String,
+    /// [`Nzb::id`](crate::Nzb::id) in hex, which names the release. Stored as `nzb_sha1`.
+    #[serde(rename = "nzb_sha1")]
+    pub release_id: String,
     /// The release name, from the NZB or its first file.
     pub title: String,
     /// How the files were posted.
@@ -371,7 +372,7 @@ mod tests {
 
     fn manifest(path: &str, pieces: Vec<Piece>, size: u64) -> Manifest {
         Manifest {
-            nzb_sha1: "00".into(),
+            release_id: "00".into(),
             title: "t".into(),
             packing: Packing::Direct,
             files: vec![OutputFile { path: path.into(), size, pieces }],
@@ -446,7 +447,7 @@ mod tests {
         let segments: Vec<Vec<String>> = (0..40).map(|i| vec![format!("{i}@x"), format!("{i}b@x")]).collect();
         let posted = Posted { size: 3_950, part_size: 100, segments: &segments };
         let original = Manifest {
-            nzb_sha1: "ab".repeat(20),
+            release_id: "ab".repeat(20),
             title: "Film.2024".into(),
             packing: Packing::Rar { format: RarFormat::Rar5, volumes: 2 },
             files: vec![

@@ -497,8 +497,8 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
     if files.is_empty() {
         return Err(failed.unwrap_or(ResolveError::Empty));
     }
-    let nzb_sha1 = nzb.sha1.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(Manifest { nzb_sha1, title, packing, files })
+    let release_id = nzb.id.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(Manifest { release_id, title, packing, files })
 }
 
 #[cfg(test)]
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn resolving_can_move_between_threads() {
         fn send<T: Send>(_: T) {}
-        let nzb = Nzb { meta: Vec::new(), files: Vec::new(), sha1: [0; 20] };
+        let nzb = Nzb { meta: Vec::new(), files: Vec::new(), id: [0; 20] };
         send(resolve(&nzb, &Pool::new(Vec::new())));
     }
 

@@ -40,8 +40,11 @@ pub struct Nzb {
     pub meta: Vec<(String, String)>,
     /// The files that list at least one segment, in document order.
     pub files: Vec<NzbFile>,
-    /// SHA-1 of the document, which names the release.
-    pub sha1: [u8; 20],
+    /// Names the release: a SHA-1 over each file's segment numbers and message-IDs. Indexers
+    /// vary the rest of an NZB on every download (metadata, posters, dates, groups) to mark
+    /// who fetched it, so a hash of the whole document would name the same release
+    /// differently each time it is fetched.
+    pub id: [u8; 20],
 }
 
 /// Why a document is not a usable NZB.
@@ -277,8 +280,36 @@ impl Nzb {
                 true
             });
         }
-        Ok(Self { meta, files, sha1: Sha1::digest(bytes).into() })
+        let id = release_id(&files);
+        Ok(Self { meta, files, id })
     }
+}
+
+/// A SHA-1 over the files' segments: per file, each segment's number and message-IDs, with
+/// lengths so no two lists hash alike; then the files' digests in sorted order, so file order
+/// does not matter either.
+fn release_id(files: &[NzbFile]) -> [u8; 20] {
+    let mut digests: Vec<[u8; 20]> = files
+        .iter()
+        .map(|file| {
+            let mut hash = Sha1::new();
+            for segment in &file.segments {
+                hash.update(segment.number.to_le_bytes());
+                hash.update((segment.message_ids.len() as u64).to_le_bytes());
+                for id in &segment.message_ids {
+                    hash.update((id.len() as u64).to_le_bytes());
+                    hash.update(id.as_bytes());
+                }
+            }
+            hash.finalize().into()
+        })
+        .collect();
+    digests.sort_unstable();
+    let mut hash = Sha1::new();
+    for digest in &digests {
+        hash.update(digest);
+    }
+    hash.finalize().into()
 }
 
 enum Target {
@@ -346,6 +377,34 @@ mod tests {
   </file>
   <file poster="p" date="1" subject="empty"><segments/></file>
 </nzb>"#;
+
+    fn release(meta: &str, poster: &str, group: &str, files: &[(&str, &[(u32, &str)])]) -> Nzb {
+        let mut doc = format!("<nzb><head><meta type=\"title\">{meta}</meta></head>");
+        for (subject, segments) in files {
+            doc.push_str(&format!(
+                "<file poster=\"{poster}\" date=\"1\" subject=\"{subject}\"><groups><group>{group}</group></groups><segments>"
+            ));
+            for (number, id) in *segments {
+                doc.push_str(&format!("<segment bytes=\"9\" number=\"{number}\">{id}</segment>"));
+            }
+            doc.push_str("</segments></file>");
+        }
+        doc.push_str("</nzb>");
+        Nzb::parse(doc.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_release_keeps_its_id_when_an_indexer_varies_everything_but_the_segments() {
+        let a: &[(u32, &str)] = &[(1, "a1@x"), (2, "a2@x")];
+        let b: &[(u32, &str)] = &[(1, "b1@x")];
+        let first = release("3JGKpy19.mkv", "x@y", "alt.binaries.movies", &[("a", a), ("b", b)]);
+        let again = release("5F9CDZvP.mkv", "q@z", "alt.binaries.tv", &[("b", b), ("a", a)]);
+        assert_eq!(first.id, again.id);
+        let other = release("3JGKpy19.mkv", "x@y", "alt.binaries.movies", &[("a", a), ("b", &[(1, "b9@x")])]);
+        assert_ne!(first.id, other.id);
+        let renumbered = release("3JGKpy19.mkv", "x@y", "alt.binaries.movies", &[("a", a), ("b", &[(2, "b1@x")])]);
+        assert_ne!(first.id, renumbered.id);
+    }
 
     #[test]
     fn groups_reposts_and_reads_names() {
