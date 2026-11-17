@@ -1,22 +1,27 @@
 //! A loopback NNTP server that serves articles from memory, and postings to fill it.
 //! For tests, in this crate and in the ones that use it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 use crate::nntp::Server;
 use crate::yenc;
 
+/// The username [`FakeServer`] accepts.
 pub const USERNAME: &str = "tester";
+/// The password [`FakeServer`] accepts.
 pub const PASSWORD: &str = "letmein";
 
 /// A release as posted: its NZB, and the article bodies the NZB lists.
 #[derive(Clone, Debug)]
 pub struct Posting {
+    /// The NZB listing the posting's articles.
     pub nzb: Vec<u8>,
     /// Each posted file's name and the message-IDs of its articles, in order.
     pub files: Vec<(String, Vec<String>)>,
@@ -102,22 +107,35 @@ fn escape(text: &str) -> String {
 struct State {
     articles: HashMap<String, Arc<Vec<u8>>>,
     served: HashMap<String, u32>,
+    /// Extra time before the reply to a command for this article.
+    delays: HashMap<String, Duration>,
+    /// Articles whose body is cut off halfway by closing the connection.
+    cuts: HashSet<String>,
 }
 
 struct Inner {
     state: Mutex<State>,
     /// Bytes per second across all connections; 0 is unlimited.
     rate: AtomicU64,
+    /// How long each BODY and STAT reply takes after its command arrives.
+    latency: Mutex<Duration>,
     down: AtomicBool,
     /// When the shared link is next free, for the rate limit.
     link_free: Mutex<Instant>,
     logins: AtomicU64,
+    quits: AtomicU64,
     /// Connections open now, and the most allowed at once; 0 is unlimited.
     sessions: AtomicU64,
     max_sessions: AtomicU64,
+    /// The most commands one connection had waiting for their replies at once.
+    most_in_flight: AtomicU64,
 }
 
 /// An NNTP server on 127.0.0.1 without TLS. It lives until the process exits.
+///
+/// Each connection reads commands as they arrive and answers them in order, so a client can
+/// pipeline them; with [`set_latency`](Self::set_latency), replies overlap as they would over
+/// a long link.
 #[derive(Clone)]
 pub struct FakeServer {
     inner: Arc<Inner>,
@@ -131,17 +149,25 @@ impl Default for FakeServer {
 }
 
 impl FakeServer {
+    /// Starts a server on a free loopback port.
+    ///
+    /// # Panics
+    ///
+    /// When no loopback port can be bound; this is a test fixture.
     pub fn start() -> Self {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port is free");
         let port = listener.local_addr().expect("a bound socket has an address").port();
         let inner = Arc::new(Inner {
             state: Mutex::default(),
             rate: AtomicU64::new(0),
+            latency: Mutex::new(Duration::ZERO),
             down: AtomicBool::new(false),
             link_free: Mutex::new(Instant::now()),
             logins: AtomicU64::new(0),
+            quits: AtomicU64::new(0),
             sessions: AtomicU64::new(0),
             max_sessions: AtomicU64::new(0),
+            most_in_flight: AtomicU64::new(0),
         });
         let shared = inner.clone();
         std::thread::spawn(move || {
@@ -162,6 +188,7 @@ impl FakeServer {
         Self { inner, port }
     }
 
+    /// The port the server listens on.
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -176,11 +203,13 @@ impl FakeServer {
             password: PASSWORD.into(),
             connections,
             priority,
+            pipeline: Server::DEFAULT_PIPELINE,
         }
     }
 
+    /// Serves the posting's articles.
     pub fn add(&self, posting: &Posting) {
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = self.inner.state.lock();
         for (id, body) in &posting.articles {
             state.articles.insert(id.clone(), Arc::new(body.clone()));
         }
@@ -188,17 +217,17 @@ impl FakeServer {
 
     /// Takes an article down, as a provider does on a takedown notice.
     pub fn remove(&self, message_id: &str) {
-        self.inner.state.lock().unwrap().articles.remove(message_id);
+        self.inner.state.lock().articles.remove(message_id);
     }
 
     /// How many times the article's body was sent.
     pub fn served(&self, message_id: &str) -> u32 {
-        self.inner.state.lock().unwrap().served.get(message_id).copied().unwrap_or(0)
+        self.inner.state.lock().served.get(message_id).copied().unwrap_or(0)
     }
 
     /// How many article bodies were sent in all.
     pub fn bodies(&self) -> u64 {
-        self.inner.state.lock().unwrap().served.values().map(|&n| u64::from(n)).sum()
+        self.inner.state.lock().served.values().map(|&n| u64::from(n)).sum()
     }
 
     /// Logins accepted, one per connection opened.
@@ -206,9 +235,36 @@ impl FakeServer {
         self.inner.logins.load(Ordering::Relaxed)
     }
 
+    /// QUIT commands received.
+    pub fn quits(&self) -> u64 {
+        self.inner.quits.load(Ordering::Relaxed)
+    }
+
+    /// The most commands one connection has had waiting for replies at once: 1 for a client
+    /// that does not pipeline.
+    pub fn most_in_flight(&self) -> u64 {
+        self.inner.most_in_flight.load(Ordering::Relaxed)
+    }
+
     /// Limits what all connections send together, in bytes per second. 0 is unlimited.
     pub fn set_rate(&self, bytes_per_second: u64) {
         self.inner.rate.store(bytes_per_second, Ordering::Relaxed);
+    }
+
+    /// Delays each BODY and STAT reply by `latency` after its command arrives, as a distant
+    /// server does. Commands that arrive together are delayed together, as over a network.
+    pub fn set_latency(&self, latency: Duration) {
+        *self.inner.latency.lock() = latency;
+    }
+
+    /// Delays replies about one article by `extra` more, on top of the latency.
+    pub fn delay(&self, message_id: &str, extra: Duration) {
+        self.inner.state.lock().delays.insert(message_id.to_string(), extra);
+    }
+
+    /// Closes the connection halfway through the article's body, every time it is asked for.
+    pub fn cut(&self, message_id: &str) {
+        self.inner.state.lock().cuts.insert(message_id.to_string());
     }
 
     /// Refuses connections beyond `max` open at once, as a provider does past an account's
@@ -223,12 +279,48 @@ impl FakeServer {
     }
 }
 
-fn serve(inner: &Inner, stream: TcpStream) -> std::io::Result<()> {
+/// A reply, when to send it, and what to do after.
+struct Outgoing {
+    due: Instant,
+    bytes: Vec<u8>,
+    then: Then,
+}
+
+enum Then {
+    Continue,
+    /// Send this many bytes of the reply, then close the connection.
+    Cut(usize),
+    Close,
+}
+
+/// Commands waiting for replies on one connection.
+struct InFlight(AtomicU64);
+
+fn serve(inner: &Arc<Inner>, stream: TcpStream) -> std::io::Result<()> {
     let mut out = stream.try_clone()?;
     if inner.down.load(Ordering::Relaxed) {
         return out.write_all(b"502 service unavailable\r\n");
     }
     out.write_all(b"200 fake NNTP ready\r\n")?;
+    let in_flight = Arc::new(InFlight(AtomicU64::new(0)));
+    // Bounded, so a client that never reads cannot make the server buffer without end.
+    let (replies, queue) = mpsc::sync_channel::<Outgoing>(64);
+    let writer = {
+        let (inner, in_flight) = (inner.clone(), in_flight.clone());
+        std::thread::spawn(move || write_replies(&inner, out, &queue, &in_flight))
+    };
+    let result = read_commands(inner, stream, &replies, &in_flight);
+    drop(replies);
+    let _ = writer.join();
+    result
+}
+
+fn read_commands(
+    inner: &Inner,
+    stream: TcpStream,
+    replies: &mpsc::SyncSender<Outgoing>,
+    in_flight: &InFlight,
+) -> std::io::Result<()> {
     let mut lines = BufReader::new(stream);
     let (mut user, mut authed) = (String::new(), false);
     let mut line = String::new();
@@ -237,38 +329,46 @@ fn serve(inner: &Inner, stream: TcpStream) -> std::io::Result<()> {
         if lines.read_line(&mut line)? == 0 || inner.down.load(Ordering::Relaxed) {
             return Ok(());
         }
+        let arrived = Instant::now();
+        let waiting = in_flight.0.fetch_add(1, Ordering::SeqCst) + 1;
+        inner.most_in_flight.fetch_max(waiting, Ordering::SeqCst);
         let words: Vec<&str> = line.split_whitespace().collect();
         let verb = words.first().map(|w| w.to_ascii_uppercase()).unwrap_or_default();
         let arg = |i: usize| words.get(i).copied().unwrap_or_default();
         let id = arg(1).trim_start_matches('<').trim_end_matches('>').to_string();
-        match verb.as_str() {
+        let now = |bytes: &[u8]| Outgoing { due: arrived, bytes: bytes.to_vec(), then: Then::Continue };
+        let later = |bytes: Vec<u8>, then| {
+            let delay = inner.state.lock().delays.get(&id).copied().unwrap_or_default();
+            Outgoing { due: arrived + *inner.latency.lock() + delay, bytes, then }
+        };
+        let reply = match verb.as_str() {
             "AUTHINFO" if arg(1).eq_ignore_ascii_case("USER") => {
                 user = arg(2).to_string();
-                out.write_all(b"381 password required\r\n")?;
+                now(b"381 password required\r\n")
             }
             "AUTHINFO" if arg(1).eq_ignore_ascii_case("PASS") => {
                 authed = user == USERNAME && arg(2) == PASSWORD;
                 if authed {
                     inner.logins.fetch_add(1, Ordering::Relaxed);
-                    out.write_all(b"281 welcome\r\n")?;
+                    now(b"281 welcome\r\n")
                 } else {
-                    out.write_all(b"481 authentication failed\r\n")?;
+                    now(b"481 authentication failed\r\n")
                 }
             }
-            "BODY" | "STAT" if !authed => out.write_all(b"480 authentication required\r\n")?,
+            "BODY" | "STAT" if !authed => now(b"480 authentication required\r\n"),
             "STAT" => {
-                let found = inner.state.lock().unwrap().articles.contains_key(&id);
+                let found = inner.state.lock().articles.contains_key(&id);
                 let reply = if found { format!("223 0 <{id}>\r\n") } else { "430 no such article\r\n".into() };
-                out.write_all(reply.as_bytes())?;
+                later(reply.into_bytes(), Then::Continue)
             }
             "BODY" => {
-                let body = {
-                    let mut state = inner.state.lock().unwrap();
+                let (body, cut) = {
+                    let mut state = inner.state.lock();
                     let body = state.articles.get(&id).cloned();
                     if body.is_some() {
                         *state.served.entry(id.clone()).or_default() += 1;
                     }
-                    body
+                    (body, state.cuts.contains(&id))
                 };
                 match body {
                     Some(body) => {
@@ -280,13 +380,43 @@ fn serve(inner: &Inner, stream: TcpStream) -> std::io::Result<()> {
                             reply.extend_from_slice(l);
                         }
                         reply.extend_from_slice(b".\r\n");
-                        send(inner, &mut out, &reply)?;
+                        let then = if cut { Then::Cut(reply.len() / 2) } else { Then::Continue };
+                        later(reply, then)
                     }
-                    None => out.write_all(b"430 no such article\r\n")?,
+                    None => later(b"430 no such article\r\n".to_vec(), Then::Continue),
                 }
             }
-            "QUIT" => return out.write_all(b"205 bye\r\n"),
-            _ => out.write_all(b"500 unknown command\r\n")?,
+            "QUIT" => {
+                inner.quits.fetch_add(1, Ordering::Relaxed);
+                Outgoing { due: arrived, bytes: b"205 bye\r\n".to_vec(), then: Then::Close }
+            }
+            _ => now(b"500 unknown command\r\n"),
+        };
+        let close = !matches!(reply.then, Then::Continue);
+        if replies.send(reply).is_err() {
+            return Ok(());
+        }
+        if close {
+            // Read on to the client's close, so the socket shuts with a FIN, not a reset that
+            // could discard replies the client has not read yet.
+            std::io::copy(&mut lines, &mut std::io::sink())?;
+            return Ok(());
+        }
+    }
+}
+
+fn write_replies(inner: &Inner, mut out: TcpStream, queue: &mpsc::Receiver<Outgoing>, in_flight: &InFlight) {
+    for reply in queue {
+        std::thread::sleep(reply.due.saturating_duration_since(Instant::now()));
+        let bytes = match reply.then {
+            Then::Cut(at) => &reply.bytes[..at],
+            Then::Continue | Then::Close => &reply.bytes[..],
+        };
+        let sent = send(inner, &mut out, bytes);
+        in_flight.0.fetch_sub(1, Ordering::SeqCst);
+        if sent.is_err() || !matches!(reply.then, Then::Continue) {
+            let _ = out.shutdown(Shutdown::Write);
+            return;
         }
     }
 }
@@ -297,7 +427,7 @@ fn send(inner: &Inner, out: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()>
         if rate > 0 {
             let cost = Duration::from_secs_f64(chunk.len() as f64 / rate as f64);
             let done = {
-                let mut free = inner.link_free.lock().unwrap();
+                let mut free = inner.link_free.lock();
                 *free = (*free).max(Instant::now()) + cost;
                 *free
             };

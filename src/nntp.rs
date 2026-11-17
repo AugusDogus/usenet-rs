@@ -1,31 +1,67 @@
 //! NNTP over TLS: fetching article bodies and checking that articles exist, across
 //! servers tried in priority order.
+//!
+//! A [`Pool`] keeps logged-in connections to each [`Server`] and pipelines requests on them:
+//! each connection carries up to [`Server::pipeline`] commands at once, and their replies
+//! come back in the order the commands went out.
+//!
+//! # Head-of-line blocking
+//!
+//! A reply queued behind a slow one on the same connection waits for it. So a request goes
+//! to an idle connection when one is open, and a new connection is opened in the background
+//! when none is idle and the server allows more; only then does it queue behind others, on
+//! the connection with the fewest in flight. A seek while a download keeps every connection
+//! busy waits behind at most `pipeline - 1` articles, which is the price of keeping a
+//! connection's link busy across round trips. A pipeline of 1 never queues.
+
+mod connection;
+mod error;
+mod reply;
 
 use std::fmt;
+use std::num::NonZeroU8;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio::sync::Notify;
-use tokio::time::timeout;
+use tokio::sync::{Notify, mpsc, oneshot};
 
+use connection::{Job, Outcome, Owner, Session};
+pub use error::{ConnectFailure, IoFailure, NntpError};
+pub use reply::Violation;
+
+/// A news server and an account on it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Server {
+    /// The host name or address.
     pub host: String,
+    /// Usually 563 for TLS and 119 without.
     pub port: u16,
+    /// Whether to connect over TLS. True unless set.
     #[serde(default = "yes")]
     pub tls: bool,
+    /// The account's username.
     pub username: String,
+    /// The account's password.
     pub password: String,
-    /// The most connections the pool opens to this server.
+    /// The most connections the pool opens to this server. 8 unless set.
     #[serde(default = "eight")]
     pub connections: u16,
     /// Lower is tried first, as in SABnzbd. Backup servers get a higher number.
     #[serde(default)]
     pub priority: i32,
+    /// The most commands in flight on one connection; 1 sends each command only after the
+    /// last reply. [`Server::DEFAULT_PIPELINE`] unless set.
+    #[serde(default = "default_pipeline")]
+    pub pipeline: NonZeroU8,
+}
+
+impl Server {
+    /// Enough commands in flight to keep a connection busy across a round trip to a distant
+    /// server, without queueing a seek behind many articles.
+    pub const DEFAULT_PIPELINE: NonZeroU8 = NonZeroU8::MIN.saturating_add(3);
 }
 
 fn yes() -> bool {
@@ -36,215 +72,33 @@ fn eight() -> u16 {
     8
 }
 
+fn default_pipeline() -> NonZeroU8 {
+    Server::DEFAULT_PIPELINE
+}
+
 impl fmt::Debug for Server {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Server({}:{}, priority {})", self.host, self.port, self.priority)
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum NntpError {
-    /// No configured server has the article; it expired or was taken down.
-    Missing {
-        message_id: String,
-    },
-    Connect {
-        server: String,
-        reason: String,
-    },
-    Login {
-        server: String,
-        reply: String,
-    },
-    Reply {
-        server: String,
-        command: &'static str,
-        reply: String,
-    },
-    Io {
-        server: String,
-        reason: String,
-    },
-    /// Every server failed to answer for a reason other than a missing article.
-    Unreachable {
-        message_id: String,
-        servers: String,
-    },
-}
-
-impl fmt::Display for NntpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Missing { message_id } => write!(f, "article <{message_id}> is missing on every server"),
-            Self::Connect { server, reason } => write!(f, "could not connect to {server}: {reason}"),
-            Self::Login { server, reply } => write!(f, "{server} rejected the login: {reply}"),
-            Self::Reply { server, command, reply } => write!(f, "{server} answered {command} with: {reply}"),
-            Self::Io { server, reason } => write!(f, "lost the connection to {server}: {reason}"),
-            Self::Unreachable { message_id, servers } => {
-                write!(f, "no server could send article <{message_id}> ({servers})")
-            }
-        }
-    }
-}
-
-impl std::error::Error for NntpError {}
-
-/// Silence this long mid-command means the connection is dead.
-const IO_TIMEOUT: Duration = Duration::from_secs(20);
-/// Connecting, TLS, greeting, and login. A server at its connection limit can accept the
-/// socket and then say nothing, so this is short; the pool moves on to another server.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// How long a server that refused a connection or login is left alone.
 const BACKOFF: Duration = Duration::from_secs(60);
+/// Answers slower than this count as slow in [`ServerReport::slow`].
+const SLOW: Duration = Duration::from_secs(5);
+/// The longest message-ID RFC 5536 allows, angle brackets included.
+const MAX_MESSAGE_ID: usize = 250;
 
-trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
-
-pub struct Connection {
-    io: BufReader<Box<dyn Io>>,
-    label: String,
-    broken: bool,
-}
-
-fn tls_config() -> Arc<rustls::ClientConfig> {
-    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            use rustls_platform_verifier::ConfigVerifierExt;
-            Arc::new(rustls::ClientConfig::with_platform_verifier().expect("the platform certificate verifier loads"))
-        })
-        .clone()
-}
-
-impl Connection {
-    pub async fn open(server: &Server) -> Result<Self, NntpError> {
-        let label = format!("{}:{}", server.host, server.port);
-        timeout(CONNECT_TIMEOUT, Self::connect(server, &label)).await.map_err(|_| NntpError::Connect {
-            server: label.clone(),
-            reason: format!(
-                "no login within {}s; the server may be at its connection limit",
-                CONNECT_TIMEOUT.as_secs()
-            ),
-        })?
-    }
-
-    async fn connect(server: &Server, label: &str) -> Result<Self, NntpError> {
-        let label = label.to_string();
-        let connect_error = |reason: String| NntpError::Connect { server: label.clone(), reason };
-        let tcp = timeout(IO_TIMEOUT, TcpStream::connect((server.host.as_str(), server.port)))
-            .await
-            .map_err(|_| connect_error("timed out".into()))?
-            .map_err(|e| connect_error(e.to_string()))?;
-        let io: Box<dyn Io> = if server.tls {
-            let name = rustls::pki_types::ServerName::try_from(server.host.clone())
-                .map_err(|e| connect_error(format!("bad host name: {e}")))?;
-            let tls = tokio_rustls::TlsConnector::from(tls_config());
-            let stream = timeout(IO_TIMEOUT, tls.connect(name, tcp))
-                .await
-                .map_err(|_| connect_error("TLS handshake timed out".into()))?
-                .map_err(|e| connect_error(format!("TLS: {e}")))?;
-            Box::new(stream)
-        } else {
-            Box::new(tcp)
-        };
-        let mut conn = Self { io: BufReader::with_capacity(256 * 1024, io), label: label.clone(), broken: false };
-        let greeting = conn.reply().await?;
-        if !greeting.starts_with("200") && !greeting.starts_with("201") {
-            return Err(connect_error(format!("unexpected greeting: {greeting}")));
-        }
-        let user = conn.command(&format!("AUTHINFO USER {}", server.username), "AUTHINFO").await?;
-        let login = if user.starts_with("381") {
-            conn.command(&format!("AUTHINFO PASS {}", server.password), "AUTHINFO").await?
-        } else {
-            user
-        };
-        if !login.starts_with("281") {
-            return Err(NntpError::Login { server: conn.label.clone(), reply: login });
-        }
-        Ok(conn)
-    }
-
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// The decoded-ready body: dot-stuffing removed, lines kept with their CRLF.
-    pub async fn body(&mut self, message_id: &str) -> Result<Vec<u8>, NntpError> {
-        let reply = self.command(&format!("BODY <{message_id}>"), "BODY").await?;
-        match status(&reply) {
-            b"222" => self.multiline().await,
-            b"430" | b"423" => Err(NntpError::Missing { message_id: message_id.to_string() }),
-            _ => Err(self.unexpected("BODY", reply)),
-        }
-    }
-
-    pub async fn stat(&mut self, message_id: &str) -> Result<bool, NntpError> {
-        let reply = self.command(&format!("STAT <{message_id}>"), "STAT").await?;
-        match status(&reply) {
-            b"223" => Ok(true),
-            b"430" | b"423" => Ok(false),
-            _ => Err(self.unexpected("STAT", reply)),
-        }
-    }
-
-    fn unexpected(&mut self, command: &'static str, reply: String) -> NntpError {
-        self.broken = true;
-        NntpError::Reply { server: self.label.clone(), command, reply }
-    }
-
-    fn io_error(&mut self, reason: String) -> NntpError {
-        self.broken = true;
-        NntpError::Io { server: self.label.clone(), reason }
-    }
-
-    async fn command(&mut self, line: &str, _name: &'static str) -> Result<String, NntpError> {
-        let sent = timeout(IO_TIMEOUT, self.io.get_mut().write_all(format!("{line}\r\n").as_bytes())).await;
-        match sent {
-            Ok(Ok(())) => self.reply().await,
-            Ok(Err(e)) => Err(self.io_error(e.to_string())),
-            Err(_) => Err(self.io_error("timed out sending a command".into())),
-        }
-    }
-
-    async fn reply(&mut self) -> Result<String, NntpError> {
-        let mut line = Vec::new();
-        match timeout(IO_TIMEOUT, self.io.read_until(b'\n', &mut line)).await {
-            Ok(Ok(0)) => Err(self.io_error("the server closed the connection".into())),
-            Ok(Ok(_)) => Ok(String::from_utf8_lossy(&line).trim_end().to_string()),
-            Ok(Err(e)) => Err(self.io_error(e.to_string())),
-            Err(_) => Err(self.io_error(format!("no reply for {}s", IO_TIMEOUT.as_secs()))),
-        }
-    }
-
-    async fn multiline(&mut self) -> Result<Vec<u8>, NntpError> {
-        let mut body = Vec::with_capacity(800 * 1024);
-        let mut line = Vec::with_capacity(256);
-        loop {
-            line.clear();
-            match timeout(IO_TIMEOUT, self.io.read_until(b'\n', &mut line)).await {
-                Ok(Ok(0)) => return Err(self.io_error("the server closed the connection mid-article".into())),
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => return Err(self.io_error(e.to_string())),
-                Err(_) => return Err(self.io_error("the article stalled".into())),
-            }
-            if line == b".\r\n" || line == b".\n" {
-                return Ok(body);
-            }
-            body.extend_from_slice(line.strip_prefix(b".").unwrap_or(&line));
-        }
-    }
-}
-
-/// The three-digit code a reply starts with, or what there is of it. Byte-wise, since a
-/// misbehaving server can send any bytes.
-fn status(reply: &str) -> &[u8] {
-    let bytes = reply.as_bytes();
-    &bytes[..bytes.len().min(3)]
+/// True when `message_id` can go into a command as `<message_id>`: printable ASCII, no
+/// spaces or angle brackets, so it can neither end the command early nor add one.
+fn sendable(message_id: &str) -> bool {
+    !message_id.is_empty()
+        && message_id.len() + 2 <= MAX_MESSAGE_ID
+        && message_id.bytes().all(|b| b.is_ascii_graphic() && b != b'<' && b != b'>')
 }
 
 struct Slot {
     server: Server,
-    state: Mutex<SlotState>,
     counters: Counters,
 }
 
@@ -263,69 +117,159 @@ struct Counters {
 /// How one server has served this pool, for diagnosing slow or failing servers.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ServerReport {
+    /// The server's host.
     pub host: String,
+    /// Requests the server answered with the article or its existence.
     pub answered: u64,
+    /// Requests for articles the server lacks.
     pub missing: u64,
+    /// Requests that failed on the server: a dropped connection or an unexpected reply.
     pub failed: u64,
+    /// Connections that could not be opened, or whose login failed.
     pub refused: u64,
+    /// Answers that took longer than 5 seconds.
     pub slow: u64,
-    /// Mean time per answered or missing request.
+    /// Mean time per answered or missing request, waiting behind pipelined ones included.
     pub mean_millis: u64,
-    pub last_error: Option<String>,
+    /// Why the server last failed, until it next answers.
+    pub last_error: Option<NntpError>,
 }
 
-const SLOW: Duration = Duration::from_secs(5);
+/// One open connection, as the pool sees it.
+struct Conn {
+    id: u64,
+    jobs: mpsc::UnboundedSender<Job>,
+    /// Commands sent to it whose replies have not been read.
+    in_flight: usize,
+}
 
 #[derive(Default)]
 struct SlotState {
-    idle: Vec<Connection>,
-    open: u16,
+    conns: Vec<Conn>,
+    /// Connections being opened.
+    opening: u16,
     backoff_until: Option<Instant>,
-    last_error: Option<String>,
+    last_error: Option<NntpError>,
 }
 
+/// What the pool has done so far.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct PoolStats {
+    /// Body bytes received.
     pub bytes: u64,
+    /// Bodies received.
     pub articles: u64,
     /// Connections open now, busy or idle.
     pub connections: u32,
 }
 
-/// Connections across servers. A request uses the first server, by priority, with a free
-/// connection, and moves to the next server when the article is missing there.
+/// Connections across servers. A request uses the best server, by priority, that has room
+/// for it, and moves to the next server when the article is missing there. Cloning shares
+/// the connections. Dropping the last clone closes them, with a QUIT.
+///
+/// Must be used within a Tokio runtime: each connection runs as a task.
+///
+/// ```no_run
+/// use usenet::{Pool, Server};
+///
+/// # async fn run() -> Result<(), usenet::nntp::NntpError> {
+/// let pool = Pool::new(vec![Server {
+///     host: "news.example.com".into(),
+///     port: 563,
+///     tls: true,
+///     username: "user".into(),
+///     password: "secret".into(),
+///     connections: 8,
+///     priority: 0,
+///     pipeline: Server::DEFAULT_PIPELINE,
+/// }]);
+/// if pool.stat("part1of10.abc@example.com").await? {
+///     let body = pool.body("part1of10.abc@example.com").await?;
+///     println!("{} bytes of yEnc", body.len());
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Pool(Arc<PoolInner>);
 
 struct PoolInner {
     slots: Vec<Slot>,
+    /// Each slot's connections, under one lock so a request picks among them atomically.
+    states: Mutex<Vec<SlotState>>,
+    /// Signalled whenever a connection gets room, opens, or fails to open.
     freed: Notify,
     bytes: AtomicU64,
     articles: AtomicU64,
+    next_id: AtomicU64,
 }
 
-enum Op<'a> {
-    Body(&'a str),
-    Stat(&'a str),
+/// Where a request was sent.
+struct Sent {
+    slot: usize,
+    conn: u64,
+    jobs: mpsc::UnboundedSender<Job>,
 }
 
-enum Answer {
-    Body(Vec<u8>),
-    Exists,
+enum Pick {
+    Sent(Sent),
+    /// Every usable connection is full; one may free up or open.
+    Wait,
+    /// Every server was tried or is refusing connections.
+    Exhausted,
+}
+
+/// A connection's place in the pool, held by its task.
+struct Seat {
+    pool: Weak<PoolInner>,
+    slot: usize,
+    id: u64,
+}
+
+impl Owner for Seat {
+    fn answered(&self) {
+        let Some(pool) = self.pool.upgrade() else { return };
+        if let Some(conn) = pool.states.lock()[self.slot].conns.iter_mut().find(|c| c.id == self.id) {
+            conn.in_flight = conn.in_flight.saturating_sub(1);
+        }
+        pool.freed.notify_waiters();
+    }
+}
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        if let Some(pool) = self.pool.upgrade() {
+            pool.forget(self.slot, self.id);
+        }
+    }
+}
+
+impl PoolInner {
+    fn forget(&self, slot: usize, id: u64) {
+        self.states.lock()[slot].conns.retain(|c| c.id != id);
+        self.freed.notify_waiters();
+    }
 }
 
 impl Pool {
+    /// A pool over `servers`, which connects only when asked for an article.
     pub fn new(mut servers: Vec<Server>) -> Self {
         servers.sort_by_key(|s| s.priority);
-        let slots = servers
-            .into_iter()
-            .map(|server| Slot { server, state: Mutex::default(), counters: Counters::default() })
-            .collect();
-        Self(Arc::new(PoolInner { slots, freed: Notify::new(), bytes: AtomicU64::new(0), articles: AtomicU64::new(0) }))
+        let states = servers.iter().map(|_| SlotState::default()).collect();
+        let slots = servers.into_iter().map(|server| Slot { server, counters: Counters::default() }).collect();
+        Self(Arc::new(PoolInner {
+            slots,
+            states: Mutex::new(states),
+            freed: Notify::new(),
+            bytes: AtomicU64::new(0),
+            articles: AtomicU64::new(0),
+            next_id: AtomicU64::new(0),
+        }))
     }
 
+    /// What the pool has fetched, and how many connections it holds.
     pub fn stats(&self) -> PoolStats {
-        let connections = self.0.slots.iter().map(|s| u32::from(s.state.lock().unwrap().open)).sum();
+        let connections = self.0.states.lock().iter().map(|s| s.conns.len() as u32).sum();
         PoolStats {
             bytes: self.0.bytes.load(Ordering::Relaxed),
             articles: self.0.articles.load(Ordering::Relaxed),
@@ -333,11 +277,14 @@ impl Pool {
         }
     }
 
+    /// How each server has done, in priority order.
     pub fn report(&self) -> Vec<ServerReport> {
+        let states = self.0.states.lock();
         self.0
             .slots
             .iter()
-            .map(|s| {
+            .zip(states.iter())
+            .map(|(s, state)| {
                 let c = &s.counters;
                 let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
                 let timed = load(&c.answered) + load(&c.missing);
@@ -349,177 +296,221 @@ impl Pool {
                     refused: load(&c.refused),
                     slow: load(&c.slow),
                     mean_millis: load(&c.millis).checked_div(timed).unwrap_or(0),
-                    last_error: s.state.lock().unwrap().last_error.clone(),
+                    last_error: state.last_error.clone(),
                 }
             })
             .collect()
     }
 
-    /// The most connections the pool uses at once: those of its largest priority tier, since
-    /// a lower tier is only asked for what the tiers above it lack.
+    /// The most requests the pool serves at once, connections times pipeline depth, of its
+    /// largest priority tier, since a lower tier is only asked for what the tiers above it
+    /// lack. Running this many requests at a time keeps every connection busy.
     pub fn capacity(&self) -> usize {
         let mut tiers: Vec<(i32, usize)> = Vec::new();
         for s in &self.0.slots {
+            let room = usize::from(s.server.connections) * usize::from(s.server.pipeline.get());
             match tiers.last_mut() {
-                Some((priority, total)) if *priority == s.server.priority => {
-                    *total += usize::from(s.server.connections)
-                }
-                _ => tiers.push((s.server.priority, usize::from(s.server.connections))),
+                Some((priority, total)) if *priority == s.server.priority => *total += room,
+                _ => tiers.push((s.server.priority, room)),
             }
         }
         tiers.into_iter().map(|(_, total)| total).max().unwrap_or(0)
     }
 
+    /// The article's body: dot-stuffing removed, lines kept with their CRLF, ready for yEnc.
+    ///
+    /// Fails with [`NntpError::Missing`] when no server has the article, and with
+    /// [`NntpError::Unreachable`] when some server could not be asked.
     pub async fn body(&self, message_id: &str) -> Result<Vec<u8>, NntpError> {
-        match self.run(message_id, Op::Body(message_id)).await? {
-            Answer::Body(body) => {
-                self.0.bytes.fetch_add(body.len() as u64, Ordering::Relaxed);
-                self.0.articles.fetch_add(1, Ordering::Relaxed);
-                Ok(body)
-            }
-            Answer::Exists => unreachable!("BODY answers with a body"),
-        }
+        let body = self.run(message_id, |message_id, reply| Job::Body { message_id, reply }).await?;
+        self.0.bytes.fetch_add(body.len() as u64, Ordering::Relaxed);
+        self.0.articles.fetch_add(1, Ordering::Relaxed);
+        Ok(body)
     }
 
     /// True when at least one server has the article.
     pub async fn stat(&self, message_id: &str) -> Result<bool, NntpError> {
-        match self.run(message_id, Op::Stat(message_id)).await {
-            Ok(_) => Ok(true),
+        match self.run(message_id, |message_id, reply| Job::Stat { message_id, reply }).await {
+            Ok(()) => Ok(true),
             Err(NntpError::Missing { .. }) => Ok(false),
             Err(e) => Err(e),
         }
     }
 
-    async fn run(&self, message_id: &str, op: Op<'_>) -> Result<Answer, NntpError> {
+    /// Asks servers in priority order until one has the article. A request whose reply breaks
+    /// its connection is retried once on the same server, then moves on. One queued behind it
+    /// is retried without counting against it: each break blames one request, so a server
+    /// that keeps breaking connections runs out of requests to blame.
+    async fn run<T>(
+        &self,
+        message_id: &str,
+        job: impl Fn(String, oneshot::Sender<Outcome<T>>) -> Job,
+    ) -> Result<T, NntpError> {
+        if !sendable(message_id) {
+            return Err(NntpError::InvalidMessageId { message_id: message_id.to_string() });
+        }
+        if self.0.slots.is_empty() {
+            return Err(NntpError::NoServers { message_id: message_id.to_string() });
+        }
         let mut tried = vec![false; self.0.slots.len()];
         let mut missing = false;
         let mut failures = 0;
-        while let Some((slot, mut conn)) = self.acquire(&tried).await {
+        while let Some(sent) = self.acquire(&tried).await {
+            let (reply, answer) = oneshot::channel();
             let asked = Instant::now();
-            let result = match op {
-                Op::Body(id) => conn.body(id).await.map(Answer::Body),
-                Op::Stat(id) => match conn.stat(id).await {
-                    Ok(true) => Ok(Answer::Exists),
-                    Ok(false) => Err(NntpError::Missing { message_id: id.to_string() }),
-                    Err(e) => Err(e),
-                },
+            let outcome = match sent.jobs.send(job(message_id.to_string(), reply)) {
+                Ok(()) => answer.await.unwrap_or(Outcome::Failed(NntpError::Io {
+                    server: self.label(sent.slot),
+                    failure: IoFailure::Closed,
+                })),
+                Err(_) => {
+                    // The connection failed after it was picked.
+                    self.0.forget(sent.slot, sent.conn);
+                    Outcome::Failed(NntpError::Io { server: self.label(sent.slot), failure: IoFailure::Closed })
+                }
             };
-            let counters = &self.0.slots[slot].counters;
+            let counters = &self.0.slots[sent.slot].counters;
             let took = asked.elapsed();
             if took >= SLOW {
                 counters.slow.fetch_add(1, Ordering::Relaxed);
             }
-            match &result {
-                Ok(_) | Err(NntpError::Missing { .. }) => {
-                    let count = if result.is_ok() { &counters.answered } else { &counters.missing };
-                    count.fetch_add(1, Ordering::Relaxed);
-                    counters.millis.fetch_add(took.as_millis() as u64, Ordering::Relaxed);
-                }
-                Err(_) => {
-                    counters.failed.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            let error = match result {
-                Ok(answer) => {
-                    self.release(slot, conn);
+            let error = match outcome {
+                Outcome::Found(answer) => {
+                    self.answered(sent.slot, &counters.answered, took);
                     return Ok(answer);
                 }
-                Err(e) => e,
+                Outcome::Missing => {
+                    self.answered(sent.slot, &counters.missing, took);
+                    missing = true;
+                    tried[sent.slot] = true;
+                    continue;
+                }
+                Outcome::Failed(error) => error,
+                // Another request broke the connection; this one was only queued behind it.
+                Outcome::Dropped => continue,
             };
-            self.release(slot, conn);
-            if matches!(error, NntpError::Missing { .. }) {
-                missing = true;
-                tried[slot] = true;
-                continue;
-            }
-            self.0.slots[slot].state.lock().unwrap().last_error = Some(error.to_string());
-            // A dropped connection is retried once on the same server before moving on.
+            counters.failed.fetch_add(1, Ordering::Relaxed);
+            self.0.states.lock()[sent.slot].last_error = Some(error);
             failures += 1;
             if failures >= 2 {
-                tried[slot] = true;
+                tried[sent.slot] = true;
                 failures = 0;
             }
         }
-        let errors: Vec<String> = self
-            .0
-            .slots
-            .iter()
-            .filter_map(|s| Some(format!("{}: {}", s.server.host, s.state.lock().unwrap().last_error.clone()?)))
-            .collect();
+        let errors: Vec<NntpError> = self.0.states.lock().iter().filter_map(|s| s.last_error.clone()).collect();
         if missing && errors.is_empty() {
             Err(NntpError::Missing { message_id: message_id.to_string() })
         } else {
-            let servers = if errors.is_empty() { "no server is configured".into() } else { errors.join("; ") };
-            Err(NntpError::Unreachable { message_id: message_id.to_string(), servers })
+            Err(NntpError::Unreachable { message_id: message_id.to_string(), errors })
         }
     }
 
-    /// A connection to a usable server not yet tried, from the best priority tier that has
-    /// one: a busy tier is waited for rather than skipped, so backup servers only see articles
-    /// the servers above them lack, or requests while those servers are refusing connections.
-    /// None once every server was tried.
-    async fn acquire(&self, tried: &[bool]) -> Option<(usize, Connection)> {
+    /// Counts an answer, and clears the server's last error unless it is backing off: a refusal
+    /// stays reported until its backoff ends, even while open connections work.
+    fn answered(&self, slot: usize, count: &AtomicU64, took: Duration) {
+        count.fetch_add(1, Ordering::Relaxed);
+        self.0.slots[slot].counters.millis.fetch_add(took.as_millis() as u64, Ordering::Relaxed);
+        let mut states = self.0.states.lock();
+        let state = &mut states[slot];
+        if state.backoff_until.is_none_or(|t| t <= Instant::now()) {
+            state.last_error = None;
+        }
+    }
+
+    fn label(&self, slot: usize) -> String {
+        let server = &self.0.slots[slot].server;
+        format!("{}:{}", server.host, server.port)
+    }
+
+    /// Room for one request on a usable server not yet tried, from the best priority tier
+    /// that has one: a busy tier is waited for rather than skipped, so backup servers only see
+    /// articles the servers above them lack, or requests while those servers are refusing
+    /// connections. None once every server was tried.
+    async fn acquire(&self, tried: &[bool]) -> Option<Sent> {
         loop {
             let freed = self.0.freed.notified();
             tokio::pin!(freed);
             freed.as_mut().enable();
-            let now = Instant::now();
-            let mut tier = None;
-            let mut to_open = None;
-            for (i, slot) in self.0.slots.iter().enumerate() {
-                let mut state = slot.state.lock().unwrap();
-                // A server that refused a new connection still serves on those it has open.
-                let backing_off = state.backoff_until.is_some_and(|t| t > now);
-                if tried[i] || (backing_off && state.open == 0) {
-                    continue;
-                }
-                // Slots are sorted by priority, so the first usable one names the tier.
-                if *tier.get_or_insert(slot.server.priority) != slot.server.priority {
-                    break;
-                }
-                if let Some(conn) = state.idle.pop() {
-                    return Some((i, conn));
-                }
-                if !backing_off && to_open.is_none() && state.open < slot.server.connections {
-                    state.open += 1;
-                    to_open = Some(i);
-                }
-            }
-            // No tier means every server was tried or is refusing connections.
-            tier?;
-            let Some(i) = to_open else {
-                freed.await;
-                continue;
-            };
-            let slot = &self.0.slots[i];
-            match Connection::open(&slot.server).await {
-                Ok(conn) => return Some((i, conn)),
-                Err(e) => {
-                    slot.counters.refused.fetch_add(1, Ordering::Relaxed);
-                    let mut state = slot.state.lock().unwrap();
-                    state.open -= 1;
-                    state.backoff_until = Some(Instant::now() + BACKOFF);
-                    state.last_error = Some(e.to_string());
-                    drop(state);
-                    self.0.freed.notify_waiters();
-                }
+            match self.pick(tried) {
+                Pick::Sent(sent) => return Some(sent),
+                Pick::Exhausted => return None,
+                Pick::Wait => freed.await,
             }
         }
     }
 
-    fn release(&self, slot: usize, conn: Connection) {
-        let mut state = self.0.slots[slot].state.lock().unwrap();
-        if conn.broken {
-            state.open -= 1;
-        } else {
-            // A refusal stays reported until its backoff ends, even while open connections work.
-            if state.backoff_until.is_none_or(|t| t <= Instant::now()) {
-                state.last_error = None;
+    fn pick(&self, tried: &[bool]) -> Pick {
+        let now = Instant::now();
+        let mut states = self.0.states.lock();
+        let mut tier = None;
+        // The connection with the fewest in flight that has room, and a server to open one on.
+        let mut best: Option<(usize, usize, usize)> = None;
+        let mut to_open = None;
+        for (i, (slot, state)) in self.0.slots.iter().zip(states.iter()).enumerate() {
+            // A server that refused a new connection still serves on those it has open.
+            let backing_off = state.backoff_until.is_some_and(|t| t > now);
+            if tried[i] || (backing_off && state.conns.is_empty() && state.opening == 0) {
+                continue;
             }
-            state.idle.push(conn);
+            // Slots are sorted by priority, so the first usable one names the tier.
+            if *tier.get_or_insert(slot.server.priority) != slot.server.priority {
+                break;
+            }
+            let depth = usize::from(slot.server.pipeline.get());
+            for (k, conn) in state.conns.iter().enumerate() {
+                if conn.in_flight < depth && best.is_none_or(|(_, _, load)| conn.in_flight < load) {
+                    best = Some((i, k, conn.in_flight));
+                }
+            }
+            let open = state.conns.len() + usize::from(state.opening);
+            if to_open.is_none() && !backing_off && open < usize::from(slot.server.connections) {
+                to_open = Some(i);
+            }
         }
-        drop(state);
-        self.0.freed.notify_one();
+        // No tier means every server was tried or is refusing connections.
+        if tier.is_none() {
+            return Pick::Exhausted;
+        }
+        // Width before depth: a new connection beats queueing behind a busy one.
+        if let Some(i) = to_open
+            && best.is_none_or(|(_, _, load)| load > 0)
+        {
+            states[i].opening += 1;
+            self.open(i);
+        }
+        let Some((i, k, _)) = best else { return Pick::Wait };
+        let conn = &mut states[i].conns[k];
+        conn.in_flight += 1;
+        Pick::Sent(Sent { slot: i, conn: conn.id, jobs: conn.jobs.clone() })
+    }
+
+    /// Opens a connection to slot `i` in the background, then wakes waiting requests. The
+    /// caller has counted it in `opening`.
+    fn open(&self, i: usize) {
+        let pool = self.0.clone();
+        tokio::spawn(async move {
+            let slot = &pool.slots[i];
+            let opened = Session::open(&slot.server).await;
+            let mut states = pool.states.lock();
+            let state = &mut states[i];
+            state.opening = state.opening.saturating_sub(1);
+            match opened {
+                Ok(session) => {
+                    let id = pool.next_id.fetch_add(1, Ordering::Relaxed);
+                    let (jobs, queue) = mpsc::unbounded_channel();
+                    state.conns.push(Conn { id, jobs, in_flight: 0 });
+                    drop(states);
+                    tokio::spawn(session.drive(queue, Seat { pool: Arc::downgrade(&pool), slot: i, id }));
+                }
+                Err(e) => {
+                    slot.counters.refused.fetch_add(1, Ordering::Relaxed);
+                    state.backoff_until = Some(Instant::now() + BACKOFF);
+                    state.last_error = Some(e);
+                    drop(states);
+                }
+            }
+            pool.freed.notify_waiters();
+        });
     }
 }
 
@@ -540,7 +531,7 @@ mod tests {
         primary.add(&posting);
         backup.add(&posting);
         let pool = Pool::new(vec![backup.config(4, 1), primary.config(2, 0)]);
-        assert_eq!(pool.capacity(), 4);
+        assert_eq!(pool.capacity(), 4 * usize::from(Server::DEFAULT_PIPELINE.get()));
         let ids: Vec<&str> = posting.ids().collect();
         let bodies = futures_util::future::join_all(ids.iter().map(|id| pool.body(id))).await;
         assert!(bodies.iter().all(Result::is_ok));
@@ -563,6 +554,7 @@ mod tests {
         pool.body(id).await.unwrap();
         assert_eq!(backup.served(id), 1);
         assert_eq!(pool.report()[0].refused, 1);
+        assert!(matches!(pool.report()[0].last_error, Some(NntpError::Refused { .. })));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -577,34 +569,10 @@ mod tests {
         assert!(bodies.iter().all(Result::is_ok), "{bodies:?}");
         let report = &pool.report()[0];
         assert!(report.refused >= 1);
-        assert!(report.last_error.as_deref().is_some_and(|e| e.contains("too many connections")), "{report:?}");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_reply_that_is_not_ascii_is_an_error_not_a_panic() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let (read, mut write) = stream.into_split();
-            let mut lines = BufReader::new(read).lines();
-            write.write_all(b"200 hi\r\n").await.unwrap();
-            for reply in ["381 more\r\n", "281 ok\r\n", "22\u{20ac}x\r\n", "2\u{20ac}\r\n"] {
-                lines.next_line().await.unwrap();
-                write.write_all(reply.as_bytes()).await.unwrap();
-            }
-        });
-        let server = Server {
-            host: "127.0.0.1".into(),
-            port,
-            tls: false,
-            username: "u".into(),
-            password: "p".into(),
-            connections: 1,
-            priority: 0,
-        };
-        let mut conn = Connection::open(&server).await.unwrap();
-        assert!(matches!(conn.body("a@x").await, Err(NntpError::Reply { .. })));
+        assert!(
+            report.last_error.as_ref().is_some_and(|e| e.to_string().contains("too many connections")),
+            "{report:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -613,5 +581,100 @@ mod tests {
         let pool = Pool::new(vec![server.config(1, 0)]);
         assert!(matches!(pool.body("nope@x").await, Err(NntpError::Missing { .. })));
         assert!(!pool.stat("nope@x").await.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_message_id_that_could_inject_a_command_is_refused_unsent() {
+        let server = FakeServer::start();
+        let pool = Pool::new(vec![server.config(1, 0)]);
+        for id in ["", "a b@x", "a@x>\r\nQUIT", "<a@x>", &"x".repeat(249)] {
+            assert!(matches!(pool.body(id).await, Err(NntpError::InvalidMessageId { .. })), "{id:?}");
+        }
+        assert_eq!(server.logins(), 0);
+        assert!(matches!(Pool::new(Vec::new()).body("a@x").await, Err(NntpError::NoServers { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn requests_pipeline_on_one_connection_and_fill_its_depth() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        server.set_latency(Duration::from_millis(100));
+        let pool = Pool::new(vec![server.config(1, 0)]);
+        let ids: Vec<&str> = posting.ids().take(8).collect();
+        let started = Instant::now();
+        let bodies = futures_util::future::join_all(ids.iter().map(|id| pool.body(id))).await;
+        assert!(bodies.iter().all(Result::is_ok));
+        // Two rounds of four in flight, not eight round trips.
+        assert!(started.elapsed() < Duration::from_millis(600), "{:?}", started.elapsed());
+        assert_eq!((server.logins(), server.most_in_flight()), (1, 4));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_takes_an_idle_connection_before_queueing_behind_a_slow_one() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        let ids: Vec<&str> = posting.ids().collect();
+        let pool = Pool::new(vec![server.config(2, 0)]);
+        // Open both connections.
+        futures_util::future::join_all(ids[..8].iter().map(|id| pool.body(id))).await;
+        assert_eq!(pool.stats().connections, 2);
+        server.delay(ids[0], Duration::from_secs(2));
+        let slow = pool.body(ids[0]);
+        let fast = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let started = Instant::now();
+            pool.body(ids[1]).await.unwrap();
+            started.elapsed()
+        };
+        let (slow, fast) = tokio::join!(slow, fast);
+        slow.unwrap();
+        assert!(fast < Duration::from_millis(500), "{fast:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dropped_connection_retries_every_request_that_was_on_it() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        let ids: Vec<&str> = posting.ids().take(4).collect();
+        server.cut(ids[1]);
+        let pool = Pool::new(vec![server.config(1, 0)]);
+        let bodies = futures_util::future::join_all(ids.iter().map(|id| pool.body(id))).await;
+        assert!(bodies[0].is_ok(), "{:?}", bodies[0]);
+        assert!(matches!(bodies[1], Err(NntpError::Unreachable { .. })), "{:?}", bodies[1]);
+        assert!(bodies[2..].iter().all(Result::is_ok), "{bodies:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_caller_that_gives_up_leaves_the_connection_usable() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        let ids: Vec<&str> = posting.ids().collect();
+        server.set_latency(Duration::from_millis(200));
+        let pool = Pool::new(vec![server.config(1, 0)]);
+        for id in &ids[..6] {
+            let _ = tokio::time::timeout(Duration::from_millis(20), pool.body(id)).await;
+        }
+        let bodies = futures_util::future::join_all(ids[6..14].iter().map(|id| pool.body(id))).await;
+        assert!(bodies.iter().all(Result::is_ok), "{bodies:?}");
+        assert_eq!(server.logins(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_the_pool_says_quit() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        let pool = Pool::new(vec![server.config(1, 0)]);
+        pool.body(posting.ids().next().unwrap()).await.unwrap();
+        drop(pool);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server.quits() == 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(server.quits(), 1);
     }
 }
