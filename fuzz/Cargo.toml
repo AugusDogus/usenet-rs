@@ -35,3 +35,17 @@ path = "fuzz_targets/manifest.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "yenc"
+path = "fuzz_targets/yenc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nzb"
+path = "fuzz_targets/nzb.rs"
+test = false
+doc = false
+bench = false
