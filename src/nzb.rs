@@ -121,11 +121,7 @@ impl Nzb {
                         if id.is_empty() {
                             return Err(NzbError(format!("segment {number} of {:?} has no message-ID", file.filename)));
                         }
-                        match file.segments.iter_mut().find(|s| s.number == number) {
-                            Some(s) if !s.message_ids.contains(&id) => s.message_ids.push(id),
-                            Some(_) => {}
-                            None => file.segments.push(Segment { number, bytes, message_ids: vec![id] }),
-                        }
+                        file.segments.push(Segment { number, bytes, message_ids: vec![id] });
                     }
                     None => {}
                 },
@@ -141,7 +137,22 @@ impl Nzb {
             return Err(NzbError("it lists no files with segments".into()));
         }
         for f in &mut files {
+            // Stable, so a repost's message-IDs keep the order the NZB lists them in.
             f.segments.sort_by_key(|s| s.number);
+            let mut merged: Vec<Segment> = Vec::with_capacity(f.segments.len());
+            for s in f.segments.drain(..) {
+                match merged.last_mut() {
+                    Some(m) if m.number == s.number => {
+                        for id in s.message_ids {
+                            if !m.message_ids.contains(&id) {
+                                m.message_ids.push(id);
+                            }
+                        }
+                    }
+                    _ => merged.push(s),
+                }
+            }
+            f.segments = merged;
         }
         Ok(Self { meta, files, sha1: Sha1::digest(bytes).into() })
     }
@@ -204,6 +215,17 @@ mod tests {
         let ids: Vec<(u32, Vec<&str>)> =
             f.segments.iter().map(|s| (s.number, s.message_ids.iter().map(String::as_str).collect())).collect();
         assert_eq!(ids, vec![(1, vec!["a@x", "a2@x"]), (2, vec!["b@x"])]);
+    }
+
+    #[test]
+    fn a_file_of_many_segments_parses_in_linear_time() {
+        let segments: String =
+            (1..=100_000).map(|n| format!("<segment bytes=\"1\" number=\"{n}\">{n}@x</segment>")).collect();
+        let doc = format!("<nzb><file subject=\"big\"><segments>{segments}</segments></file></nzb>");
+        let started = std::time::Instant::now();
+        let nzb = Nzb::parse(doc.as_bytes()).unwrap();
+        assert_eq!(nzb.files[0].segments.len(), 100_000);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
     }
 
     #[test]
