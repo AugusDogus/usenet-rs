@@ -193,7 +193,7 @@ fn block4(b: &[u8], at: usize) -> Result<(Block, u64), Stop> {
         return Err(Stop::Malformed(format!("a block declares an impossible size {size}")));
     }
     Reader { b, pos: at }.need(size)?;
-    let next = (at + size) as u64 + add_size;
+    let mut next = (at + size) as u64 + add_size;
     let block = match kind {
         0x73 => Block::Main { number: None, first: Some(flags & 0x0100 != 0), encrypted: flags & 0x0080 != 0 },
         0x74 => {
@@ -208,17 +208,17 @@ fn block4(b: &[u8], at: usize) -> Result<(Block, u64), Stop> {
             let name_size = usize::from(f.u16()?);
             let attributes = f.u32()?;
             let (pack_high, unp_high) = if flags & 0x100 != 0 { (f.u32()?, f.u32()?) } else { (0, 0) };
-            // Unicode names are stored as "ascii\0encoded"; the ASCII part is enough here.
-            let raw = f.bytes(name_size)?;
-            let raw = raw.split(|&c| c == 0).next().unwrap_or(raw);
-            let name = raw.iter().map(|&c| char::from(c)).collect();
+            let name = name4(f.bytes(name_size)?, flags & 0x200 != 0);
             let directory = flags & 0xe0 == 0xe0 || attributes & 0x10 != 0;
+            let packed_size = u64::from(pack_high) << 32 | u64::from(pack_low);
+            // ADD_SIZE holds only the low 32 bits of a file over 4 GiB.
+            next = (at + size) as u64 + packed_size;
             Block::File((!directory).then_some(Entry {
                 name,
                 stored: method == 0x30,
                 encrypted: flags & 0x4 != 0,
                 data_offset: (at + size) as u64,
-                packed_size: u64::from(pack_high) << 32 | u64::from(pack_low),
+                packed_size,
                 unpacked_size: u64::from(unp_high) << 32 | u64::from(unp_low),
                 split_before: flags & 0x1 != 0,
                 split_after: flags & 0x2 != 0,
@@ -229,6 +229,56 @@ fn block4(b: &[u8], at: usize) -> Result<(Block, u64), Stop> {
         _ => Block::Other,
     };
     Ok((block, next))
+}
+
+/// A RAR4 file name. With the Unicode flag it is either UTF-8, or a legacy byte name, a NUL
+/// and the Unicode name encoded against those bytes. Without it, the archiver's code page,
+/// which is read as UTF-8 when it is valid and as Latin-1 otherwise.
+fn name4(raw: &[u8], unicode: bool) -> String {
+    let legacy = |bytes: &[u8]| match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        Err(_) => bytes.iter().map(|&c| char::from(c)).collect(),
+    };
+    match raw.iter().position(|&c| c == 0) {
+        Some(nul) if unicode => decode_name4(&raw[..nul], &raw[nul + 1..]).unwrap_or_else(|| legacy(&raw[..nul])),
+        Some(nul) => legacy(&raw[..nul]),
+        None => legacy(raw),
+    }
+}
+
+/// The RAR 2.9 to 4.x Unicode name encoding: UTF-16 units, coded two bits at a time as a
+/// literal low byte, a low byte under a shared high byte, a full unit, or a run copied from
+/// the legacy name. None when the encoding is cut short.
+fn decode_name4(legacy: &[u8], encoded: &[u8]) -> Option<String> {
+    let mut units: Vec<u16> = Vec::with_capacity(legacy.len());
+    let mut bytes = encoded.iter().copied();
+    let high = u16::from(bytes.next()?) << 8;
+    let (mut flags, mut flag_bits) = (0u8, 0);
+    while let Some(b) = bytes.next() {
+        if flag_bits == 0 {
+            (flags, flag_bits) = (b, 8);
+            continue;
+        }
+        match flags >> 6 {
+            0 => units.push(u16::from(b)),
+            1 => units.push(high | u16::from(b)),
+            2 => units.push(u16::from(b) | u16::from(bytes.next()?) << 8),
+            _ => {
+                let run = usize::from(b & 0x7f) + 2;
+                let correction = if b & 0x80 != 0 { Some(bytes.next()?) } else { None };
+                for _ in 0..run {
+                    let c = *legacy.get(units.len())?;
+                    units.push(match correction {
+                        Some(k) => high | u16::from(c.wrapping_add(k)),
+                        None => u16::from(c),
+                    });
+                }
+            }
+        }
+        flags <<= 2;
+        flag_bits -= 2;
+    }
+    Some(String::from_utf16_lossy(&units))
 }
 
 /// Walks the block headers of a volume of `size` bytes. `head` is its start, usually the
@@ -258,10 +308,17 @@ where
             Some(Err(Stop::Truncated)) | None => {
                 let want = WINDOW.min((size - pos) as usize);
                 if window_at == pos && window.len() >= want {
-                    return Err(RarError::Malformed(format!("the header at byte {pos} is over {WINDOW} bytes")));
+                    let why = if want < WINDOW { "the volume ends inside it" } else { "it is over 64 KiB" };
+                    return Err(RarError::Malformed(format!("the header at byte {pos} is cut short: {why}")));
                 }
                 window = read(pos, want).await.map_err(RarError::Read)?;
                 window_at = pos;
+                if window.len() < want {
+                    return Err(RarError::Malformed(format!(
+                        "only {} of {want} bytes at byte {pos} could be read",
+                        window.len()
+                    )));
+                }
                 continue;
             }
         };
@@ -439,6 +496,66 @@ mod tests {
         assert_eq!((movie.stored, movie.packed_size, movie.crc32), (true, 300, Some(0x1234_5678)));
         assert_eq!(volume.len() as u64 - movie.data_offset, 300);
         assert_eq!(volume[movie.data_offset as usize], 0xbb);
+    }
+
+    #[tokio::test]
+    async fn a_short_read_is_an_error_not_a_retry() {
+        let volume = rar5(0, &[File { name: "a.mkv", data: 300, split: 0, method: 0, unpacked: 300 }], 0);
+        let mut reads = 0;
+        let r = scan(volume[..20].to_vec(), volume.len() as u64, |_, _| {
+            reads += 1;
+            std::future::ready(Ok::<_, ()>(vec![0; 4]))
+        })
+        .await;
+        assert!(matches!(r, Err(RarError::Malformed(_))), "{r:?}");
+        assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn rar4_unicode_names_decode() {
+        // Written by rar 6.24 for "Subs\\Ünïcödé 日本語.srt".
+        let raw = [
+            &b"Subs\\\xc3\x9cn\xc3\xafc\xc3\xb6d\xc3\xa9 \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e.srt\0"[..],
+            b"e\xc0\x03\xdcn\xef\x00c\xf6d\xe9\x1a \xe5,g\x9e\x8a\x00.srt",
+        ]
+        .concat();
+        assert_eq!(name4(&raw, true), "Subs\\Ünïcödé 日本語.srt");
+        assert_eq!(name4("Ünï.srt".as_bytes(), true), "Ünï.srt");
+        assert_eq!(name4(b"caf\xe9.srt", false), "café.srt");
+    }
+
+    #[tokio::test]
+    async fn rar4_finds_the_block_after_a_file_over_4_gib() {
+        let packed = (1u64 << 32) + 100;
+        let mut head = b"Rar!\x1a\x07\x00".to_vec();
+        head.extend([0, 0, 0x73, 0x01, 0x01, 13, 0]);
+        head.extend([0; 6]);
+        let name = b"big.mkv";
+        head.extend([0, 0, 0x74]);
+        head.extend(0x8100u16.to_le_bytes());
+        head.extend((40 + name.len() as u16).to_le_bytes());
+        head.extend((packed as u32).to_le_bytes());
+        head.extend((packed as u32).to_le_bytes());
+        head.push(2);
+        head.extend([0; 8]);
+        head.extend([29, 0x30]);
+        head.extend((name.len() as u16).to_le_bytes());
+        head.extend(0x20u32.to_le_bytes());
+        head.extend(((packed >> 32) as u32).to_le_bytes());
+        head.extend(((packed >> 32) as u32).to_le_bytes());
+        head.extend(name);
+        let data_at = head.len() as u64;
+        let tail = rar4(false, &[File { name: "after.nfo", data: 10, split: 0, method: 0x30, unpacked: 10 }], 1);
+        let tail = &tail[20..]; // its file block, without signature and main block
+        let size = data_at + packed + tail.len() as u64;
+        let r = scan(head, size, |at: u64, len: usize| {
+            let from = (at - (data_at + packed)) as usize;
+            std::future::ready(Ok::<_, ()>(tail[from..from + len].to_vec()))
+        })
+        .await
+        .unwrap();
+        let entries: Vec<_> = r.entries.iter().map(|e| (e.name.as_str(), e.packed_size, e.data_offset)).collect();
+        assert_eq!(entries, [("big.mkv", packed, data_at), ("after.nfo", 10, size - 10)]);
     }
 
     #[tokio::test]

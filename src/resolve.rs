@@ -92,12 +92,28 @@ impl Probed<'_> {
         Posted { size: self.size, part_size: self.part_size, segments: &self.ids }
     }
 
-    async fn read(&self, pool: &Pool, from: u64, length: usize) -> Result<Vec<u8>, ArticleError> {
+    async fn read(&self, pool: &Pool, from: u64, length: usize) -> Result<Vec<u8>, ResolveError> {
+        let file = || label(self.file, 0);
         let mut out = Vec::with_capacity(length);
         for piece in self.posted().pieces(from, length as u64, 0) {
-            let part = article::fetch(pool, &piece.ids).await?;
-            let skip = piece.skip as usize;
-            out.extend_from_slice(part.data.get(skip..skip + piece.length as usize).unwrap_or_default());
+            let part = article::fetch(pool, &piece.ids)
+                .await
+                .map_err(|error| ResolveError::Article { file: file(), error })?;
+            let (skip, end) = (piece.skip as usize, (piece.skip + piece.length) as usize);
+            let bytes = part.data.get(skip..end).filter(|_| part.begin == piece.begin);
+            let Some(bytes) = bytes else {
+                return Err(ResolveError::Layout {
+                    file: file(),
+                    reason: format!(
+                        "the article for bytes {}..{} holds bytes {}..{}",
+                        piece.begin,
+                        piece.begin + end as u64,
+                        part.begin,
+                        part.end()
+                    ),
+                });
+            };
+            out.extend_from_slice(bytes);
         }
         Ok(out)
     }
@@ -334,7 +350,7 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
             let file = label(p.file, 0);
             match scan {
                 Ok(volume) => volumes.push((volume, p)),
-                Err(RarError::Read(error)) => return Err(ResolveError::Article { file, error }),
+                Err(RarError::Read(error)) => return Err(error),
                 Err(RarError::Encrypted) => return Err(ResolveError::Encrypted { name: file }),
                 Err(e) => return Err(ResolveError::Rar { file, reason: e.to_string() }),
             }
@@ -427,6 +443,24 @@ mod tests {
         let pool = Pool::new(vec![server.config(4, 0)]);
         let error = resolve(&Nzb::parse(&posting.nzb).unwrap(), &pool).await.unwrap_err();
         assert!(matches!(&error, ResolveError::Article { error, .. } if error.is_missing()), "{error}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_header_read_from_the_wrong_article_is_a_layout_error() {
+        use crate::fake::{FakeServer, Posting};
+        // 500-byte articles put the movie's header, after the 1 KB sample, in the third.
+        let posting = Posting::stored_rar("Mixed", "Mixed.mkv", &data(30_000, 5), 12_000, 500);
+        let server = FakeServer::start();
+        server.add(&posting);
+        let ids = &posting.files[0].1;
+        let nzb =
+            String::from_utf8(posting.nzb.clone()).unwrap().replace(&format!(">{}<", ids[2]), &format!(">{}<", ids[1]));
+        let pool = Pool::new(vec![server.config(4, 0)]);
+        let error = resolve(&Nzb::parse(nzb.as_bytes()).unwrap(), &pool).await.unwrap_err();
+        assert!(
+            matches!(&error, ResolveError::Layout { reason, .. } if reason.contains("holds bytes 500..1000")),
+            "{error}"
+        );
     }
 
     #[test]
