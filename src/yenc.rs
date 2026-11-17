@@ -303,6 +303,9 @@ mod data {
 
     const CHUNK: usize = 64;
 
+    /// Above this many skipped bytes in a chunk, the scalar loop is faster.
+    const MAX_SIMD_SKIPS: u32 = 24;
+
     /// The decoder's state between bytes.
     #[derive(Clone, Copy)]
     struct State {
@@ -484,6 +487,11 @@ mod data {
         let cr = m.cr & !escaped;
         let lf = m.lf & !escaped;
         let skip = m.eq | cr | lf;
+        // Each skipped byte costs a copy below, so a chunk of mostly escapes, which real
+        // articles never are, is quicker byte by byte.
+        if skip.count_ones() > MAX_SIMD_SKIPS {
+            return false;
+        }
         let mut e = escaped;
         while e != 0 {
             let at = e.trailing_zeros() as usize;
