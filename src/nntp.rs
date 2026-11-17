@@ -620,8 +620,11 @@ mod tests {
         server.add(&posting);
         let ids: Vec<&str> = posting.ids().collect();
         let pool = Pool::new(vec![server.config(2, 0)]);
-        // Open both connections.
+        // Open both connections: with replies held back, the first request is still in flight
+        // when the others arrive, so the pool opens the second.
+        server.set_latency(Duration::from_millis(50));
         futures_util::future::join_all(ids[..8].iter().map(|id| pool.body(id))).await;
+        server.set_latency(Duration::ZERO);
         assert_eq!(pool.stats().connections, 2);
         server.delay(ids[0], Duration::from_secs(2));
         let slow = pool.body(ids[0]);
