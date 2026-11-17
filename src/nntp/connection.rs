@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpSocket, TcpStream, lookup_host};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep_until, timeout};
 
@@ -20,9 +20,6 @@ pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// How long QUIT may take when a connection is closed on purpose.
 const QUIT_TIMEOUT: Duration = Duration::from_secs(1);
-/// The socket receive buffer asked for: a 256 KB article per round trip at most is a slow
-/// start on a distant server, so room for a few articles in flight.
-const RECEIVE_BUFFER: u32 = 4 * 1024 * 1024;
 
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
@@ -144,23 +141,14 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, String> {
         .clone()
 }
 
-/// A TCP connection to the first address of `host` that takes one, with Nagle off, since
-/// commands are small and a reply waits on each.
+/// A TCP connection with Nagle off, since commands are small and a reply waits on each.
+/// The receive buffer is left to the system: setting it turns off Linux's autotuning, which
+/// grows it past what a fixed size would be allowed, and a 4 MiB buffer measured no faster
+/// against a real server.
 async fn tcp(host: &str, port: u16) -> Result<TcpStream, IoFailure> {
-    let mut last = IoFailure::Os { kind: std::io::ErrorKind::NotFound, message: format!("{host} has no address") };
-    for address in lookup_host((host, port)).await? {
-        let socket = if address.is_ipv4() { TcpSocket::new_v4()? } else { TcpSocket::new_v6()? };
-        // Only a hint; the system may grant less, and that is fine.
-        let _ = socket.set_recv_buffer_size(RECEIVE_BUFFER);
-        match socket.connect(address).await {
-            Ok(stream) => {
-                stream.set_nodelay(true)?;
-                return Ok(stream);
-            }
-            Err(e) => last = e.into(),
-        }
-    }
-    Err(last)
+    let stream = TcpStream::connect((host, port)).await?;
+    stream.set_nodelay(true)?;
+    Ok(stream)
 }
 
 impl Session {
