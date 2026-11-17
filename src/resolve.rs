@@ -3,42 +3,90 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::ops::Range;
 
 use futures_util::future::join_all;
 
 use crate::article::{self, ArticleError};
-use crate::manifest::{self, Manifest, OutputFile, Packing, Posted, RarFormat};
+use crate::manifest::{Manifest, OutputFile, Packing, Posted, RarFormat};
 use crate::nntp::Pool;
 use crate::nzb::{Nzb, NzbFile};
-use crate::rar::{self, Format, RarError, Volume};
+use crate::rar::{self, Format, RarError, ScanError, Volume};
 
+/// Why an NZB could not be resolved into a [`Manifest`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ResolveError {
+    /// An article could not be fetched or decoded.
     Article {
+        /// The posted file the article belongs to.
         file: String,
+        /// Why it could not be read.
         error: ArticleError,
     },
     /// The articles do not add up to the file their headers describe.
     Layout {
+        /// The posted file.
         file: String,
-        reason: String,
+        /// How its articles disagree.
+        error: LayoutError,
     },
+    /// A RAR volume's headers are damaged or not readable. Encrypted headers are reported
+    /// as [`ResolveError::Encrypted`] instead.
     Rar {
+        /// The posted volume.
         file: String,
-        reason: String,
+        /// What is wrong with its headers.
+        error: RarError,
     },
+    /// The release's files are compressed inside its RAR archive, so it cannot stream.
     Compressed {
+        /// The largest compressed file.
         name: String,
     },
+    /// The release is in a password-protected RAR archive.
     Encrypted {
+        /// The encrypted file, or the volume whose headers are encrypted.
         name: String,
     },
+    /// The volumes hold only part of a stored file.
     Incomplete {
+        /// The file inside the archive.
         name: String,
+        /// Bytes of it the volumes hold.
         found: u64,
+        /// Its size.
         expected: u64,
     },
+    /// The NZB lists nothing but repair and index files.
     Empty,
+}
+
+/// How a posted file's articles disagree with the file their yEnc headers describe.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum LayoutError {
+    /// The first article the NZB lists does not hold the start of the file.
+    FirstNotAtStart {
+        /// The offset the article holds instead.
+        begin: u64,
+    },
+    /// The first article's size implies another number of articles than the NZB lists.
+    ArticleCount {
+        /// The posted file's size, from its yEnc header.
+        file_size: u64,
+        /// Bytes in the first article.
+        part_size: u64,
+        /// Articles the file needs at that size.
+        implied: u64,
+        /// Articles the NZB lists.
+        listed: u64,
+    },
+    /// An article holds other bytes than its place in the NZB implies.
+    WrongBytes {
+        /// The bytes of the posted file its place implies.
+        wanted: Range<u64>,
+        /// The bytes its yEnc header says it holds.
+        held: Range<u64>,
+    },
 }
 
 impl ResolveError {
@@ -48,33 +96,83 @@ impl ResolveError {
     }
 }
 
-impl fmt::Display for ResolveError {
+impl fmt::Display for LayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Article { file, error } if error.is_missing() => {
-                write!(f, "{file} has expired or been removed: {error}")
-            }
-            Self::Article { file, error } => write!(f, "could not read {file}: {error}"),
-            Self::Layout { file, reason } => write!(f, "{file} is posted unevenly: {reason}"),
-            Self::Rar { file, reason } => write!(f, "{file}: {reason}"),
-            Self::Compressed { name } => write!(f, "{name} is compressed inside its RAR archive, so it cannot stream"),
-            Self::Encrypted { name } => write!(f, "{name} is in a password-protected archive"),
-            Self::Incomplete { name, found, expected } => write!(
+            Self::FirstNotAtStart { begin } => write!(f, "its first article starts at byte {begin}, not 0"),
+            Self::ArticleCount { file_size, part_size, implied, listed } => write!(
                 f,
-                "the NZB holds {found} of the {expected} bytes of {name}; volumes are missing or out of order"
+                "its first article holds {part_size} of its {file_size} bytes, implying {implied} articles, \
+                 but the NZB lists {listed}"
             ),
-            Self::Empty => f.write_str("the NZB holds no files this crate can read"),
+            Self::WrongBytes { wanted, held } => write!(
+                f,
+                "the article listed for bytes {}..{} holds bytes {}..{}",
+                wanted.start, wanted.end, held.start, held.end
+            ),
         }
     }
 }
 
-impl std::error::Error for ResolveError {}
+impl std::error::Error for LayoutError {}
+
+impl fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Article { file, error } if error.is_missing() => write!(
+                f,
+                "{file} has expired or been removed ({error}), so the release cannot be read whole; \
+                 try another posting of it or a server with longer retention"
+            ),
+            Self::Article { file, error } => {
+                write!(f, "could not read {file} ({error}); check the servers and the connection, then try again")
+            }
+            Self::Layout { file, error } => write!(
+                f,
+                "{file} is posted inconsistently: {error}, so its bytes cannot be located; \
+                 the posting is damaged, so try another"
+            ),
+            Self::Rar { file, error } => write!(f, "{file}: {error}"),
+            Self::Compressed { name } => write!(
+                f,
+                "{name} is compressed inside its RAR archive, so the release can only be downloaded and \
+                 extracted, not streamed"
+            ),
+            Self::Encrypted { name } => write!(
+                f,
+                "{name} is in a password-protected RAR archive, so it cannot be read without the password, \
+                 which this crate does not take; try another release"
+            ),
+            Self::Incomplete { name, found, expected } => write!(
+                f,
+                "the NZB holds {found} of the {expected} bytes of {name}, so volumes are missing or \
+                 misnamed and the file cannot be read whole; try another posting"
+            ),
+            Self::Empty => f.write_str(
+                "the NZB holds no files this crate can read, only repair and index files, so there is nothing to stream",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Article { error, .. } => Some(error),
+            Self::Layout { error, .. } => Some(error),
+            Self::Rar { error, .. } => Some(error),
+            _ => None,
+        }
+    }
+}
 
 const SKIPPED: [&str; 5] = [".par2", ".sfv", ".srr", ".srs", ".nzb"];
 const PAR2: &[u8] = b"PAR2\0PKT";
 
 struct Probed<'a> {
     file: &'a NzbFile,
+    /// Its place in the NZB.
+    index: usize,
     /// The name in the yEnc header, which may be obfuscated.
     name: String,
     size: u64,
@@ -93,25 +191,20 @@ impl Probed<'_> {
     }
 
     async fn read(&self, pool: &Pool, from: u64, length: usize) -> Result<Vec<u8>, ResolveError> {
-        let file = || label(self.file, 0);
+        let file = || label(self.file, self.index);
+        // `length` is at most a header window, so this is bounded.
         let mut out = Vec::with_capacity(length);
         for piece in self.posted().pieces(from, length as u64, 0) {
             let part = article::fetch(pool, &piece.ids)
                 .await
                 .map_err(|error| ResolveError::Article { file: file(), error })?;
-            let (skip, end) = (piece.skip as usize, (piece.skip + piece.length) as usize);
-            let bytes = part.data.get(skip..end).filter(|_| part.begin == piece.begin);
+            let end = piece.skip.saturating_add(piece.length);
+            let range = usize::try_from(piece.skip).ok().zip(usize::try_from(end).ok());
+            let bytes = range.and_then(|(skip, end)| part.data.get(skip..end)).filter(|_| part.begin == piece.begin);
             let Some(bytes) = bytes else {
-                return Err(ResolveError::Layout {
-                    file: file(),
-                    reason: format!(
-                        "the article for bytes {}..{} holds bytes {}..{}",
-                        piece.begin,
-                        piece.begin + end as u64,
-                        part.begin,
-                        part.end()
-                    ),
-                });
+                let held = part.begin..part.begin.saturating_add(part.data.len() as u64);
+                let wanted = piece.begin..piece.begin.saturating_add(end);
+                return Err(ResolveError::Layout { file: file(), error: LayoutError::WrongBytes { wanted, held } });
             };
             out.extend_from_slice(bytes);
         }
@@ -121,29 +214,25 @@ impl Probed<'_> {
 
 async fn probe<'a>(pool: &Pool, index: usize, file: &'a NzbFile) -> Result<Option<Probed<'a>>, ResolveError> {
     let label = || label(file, index);
-    let first = &file.segments[0];
+    let Some(first) = file.segments.first() else { return Ok(None) };
     let part = article::fetch(pool, &first.message_ids)
         .await
         .map_err(|error| ResolveError::Article { file: label(), error })?;
     if part.data.starts_with(PAR2) {
         return Ok(None);
     }
+    let layout = |error| Err(ResolveError::Layout { file: label(), error });
+    if part.begin != 0 {
+        return layout(LayoutError::FirstNotAtStart { begin: part.begin });
+    }
     let part_size = part.data.len() as u64;
-    let expected = if part_size == 0 { 0 } else { part.file_size.div_ceil(part_size) };
-    if part.begin != 0 || expected != file.segments.len() as u64 {
-        return Err(ResolveError::Layout {
-            file: label(),
-            reason: format!(
-                "its first article holds bytes {}..{} of {}, implying {expected} articles, but the NZB lists {}",
-                part.begin,
-                part.end(),
-                part.file_size,
-                file.segments.len()
-            ),
-        });
+    let implied = if part_size == 0 { 0 } else { part.file_size.div_ceil(part_size) };
+    let listed = file.segments.len() as u64;
+    if implied != listed {
+        return layout(LayoutError::ArticleCount { file_size: part.file_size, part_size, implied, listed });
     }
     let ids = file.segments.iter().map(|s| s.message_ids.clone()).collect();
-    Ok(Some(Probed { file, name: part.name, size: part.file_size, part_size, head: part.data, ids }))
+    Ok(Some(Probed { file, index, name: part.name, size: part.file_size, part_size, head: part.data, ids }))
 }
 
 fn container_extension(head: &[u8]) -> Option<&'static str> {
@@ -166,8 +255,10 @@ fn obfuscated(name: &str) -> bool {
     stem.len() >= 20 && stem.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// A relative path with no empty, `.`, or `..` parts.
+/// A relative path with no empty, `.`, or `..` parts, and no `:` or NUL, which some
+/// platforms read as a drive, a stream, or the end of the name.
 fn safe_path(name: &str) -> String {
+    let name = name.replace([':', '\0'], "_");
     name.split(['/', '\\']).filter(|p| !p.is_empty() && *p != "." && *p != "..").collect::<Vec<_>>().join("/")
 }
 
@@ -195,6 +286,7 @@ fn entry_name(name: &str, title: &str) -> String {
 }
 
 fn unique(path: String, taken: &mut BTreeSet<String>) -> String {
+    let path = if path.is_empty() { "unnamed".to_string() } else { path };
     let mut candidate = path.clone();
     let mut n = 2;
     while !taken.insert(candidate.clone()) {
@@ -218,7 +310,7 @@ fn volume_order(volume: &Volume, file: &NzbFile) -> (u64, u64, u64) {
         stem.rsplit_once(".part").and_then(|(_, n)| digits(n)).unwrap_or(0)
     } else if let Some((_, ext)) = name.rsplit_once('.') {
         match ext.strip_prefix('r').and_then(digits) {
-            Some(n) => n + 1,
+            Some(n) => n.saturating_add(1),
             None => digits(ext).unwrap_or(u64::MAX),
         }
     } else {
@@ -272,11 +364,9 @@ fn rar_files(
             }
         }
     }
-    let incomplete = |c: &Chain| ResolveError::Incomplete {
-        name: c.name.clone(),
-        found: c.slices.iter().map(|s| s.2).sum(),
-        expected: c.unpacked,
-    };
+    let found = |c: &Chain| c.slices.iter().fold(0u64, |sum, s| sum.saturating_add(s.2));
+    let incomplete =
+        |c: &Chain| ResolveError::Incomplete { name: c.name.clone(), found: found(c), expected: c.unpacked };
     if let Some(c) = done.iter().chain(&open).find(|c| c.encrypted) {
         return Err(ResolveError::Encrypted { name: c.name.clone() });
     }
@@ -293,15 +383,14 @@ fn rar_files(
     }
     let mut files = Vec::new();
     for c in stored {
-        let found: u64 = c.slices.iter().map(|s| s.2).sum();
-        if found != c.unpacked {
+        if found(c) != c.unpacked {
             return Err(incomplete(c));
         }
         let mut pieces = Vec::new();
-        let mut at = 0;
+        let mut at = 0u64;
         for &(v, offset, length) in &c.slices {
             pieces.extend(volumes[v].1.posted().pieces(offset, length, at));
-            at += length;
+            at = at.saturating_add(length);
         }
         files.push(OutputFile { path: unique(entry_name(&c.name, title), taken), size: c.unpacked, pieces });
     }
@@ -309,9 +398,44 @@ fn rar_files(
 }
 
 /// Resolves the release an NZB describes. Reads one article per posted file, plus a small
-/// window wherever a RAR volume has a header past its first article.
+/// window wherever a RAR volume has a header past its first article; file data is never
+/// fetched. PAR2, SFV, SRR, SRS and nested NZB files are left out.
+///
+/// Files posted as they are map directly. Files stored in RAR volumes map onto the data
+/// inside the volumes, in volume order; compressed or encrypted archives are reported as
+/// errors, since they cannot stream.
+///
+/// ```no_run
+/// use usenet::{Nzb, Pool, ResolveError, Server, resolve};
+///
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let pool = Pool::new(vec![Server {
+///     host: "news.example.com".into(),
+///     port: 563,
+///     tls: true,
+///     username: "user".into(),
+///     password: "secret".into(),
+///     connections: 8,
+///     priority: 0,
+/// }]);
+/// let nzb = Nzb::parse(&std::fs::read("release.nzb")?)?;
+/// match resolve(&nzb, &pool).await {
+///     Ok(manifest) => {
+///         for file in &manifest.files {
+///             println!("{} ({} bytes)", file.path, file.size);
+///         }
+///         std::fs::write("release.manifest", manifest.to_bytes())?;
+///     }
+///     Err(e) if e.is_unstreamable() => println!("download and extract it instead: {e}"),
+///     Err(ResolveError::Article { error, .. }) if error.is_missing() => println!("expired: {error}"),
+///     Err(e) => return Err(e.into()),
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
-    let title = nzb.title().map(str::to_string).unwrap_or_else(|| label(&nzb.files[0], 0));
+    let Some(first) = nzb.files.first() else { return Err(ResolveError::Empty) };
+    let title = nzb.title().map(str::to_string).unwrap_or_else(|| label(first, 0));
     let candidates = nzb
         .files
         .iter()
@@ -347,20 +471,22 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
         .await;
         let mut volumes = Vec::new();
         for (scan, p) in scans {
-            let file = label(p.file, 0);
+            let file = label(p.file, p.index);
             match scan {
                 Ok(volume) => volumes.push((volume, p)),
-                Err(RarError::Read(error)) => return Err(error),
-                Err(RarError::Encrypted) => return Err(ResolveError::Encrypted { name: file }),
-                Err(e) => return Err(ResolveError::Rar { file, reason: e.to_string() }),
+                Err(ScanError::Read(error)) => return Err(error),
+                Err(ScanError::Rar(RarError::Encrypted)) => return Err(ResolveError::Encrypted { name: file }),
+                Err(ScanError::Rar(error)) => return Err(ResolveError::Rar { file, error }),
             }
         }
         volumes.sort_by_key(|(v, p)| volume_order(v, p.file));
-        let format = match volumes[0].0.format {
-            Format::Rar4 => RarFormat::Rar4,
-            Format::Rar5 => RarFormat::Rar5,
-        };
-        packing = Packing::Rar { format, volumes: volumes.len() as u32 };
+        if let Some((first, _)) = volumes.first() {
+            let format = match first.format {
+                Format::Rar4 => RarFormat::Rar4,
+                Format::Rar5 => RarFormat::Rar5,
+            };
+            packing = Packing::Rar { format, volumes: u32::try_from(volumes.len()).unwrap_or(u32::MAX) };
+        }
         files.extend(rar_files(&volumes, &title, &mut taken)?);
     }
     for p in direct {
@@ -371,7 +497,7 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
         return Err(failed.unwrap_or(ResolveError::Empty));
     }
     let nzb_sha1 = nzb.sha1.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(Manifest { format: manifest::FORMAT, nzb_sha1, title, packing, files })
+    Ok(Manifest { nzb_sha1, title, packing, files })
 }
 
 #[cfg(test)]
@@ -458,7 +584,7 @@ mod tests {
         let pool = Pool::new(vec![server.config(4, 0)]);
         let error = resolve(&Nzb::parse(nzb.as_bytes()).unwrap(), &pool).await.unwrap_err();
         assert!(
-            matches!(&error, ResolveError::Layout { reason, .. } if reason.contains("holds bytes 500..1000")),
+            matches!(&error, ResolveError::Layout { error: LayoutError::WrongBytes { held, .. }, .. } if *held == (500..1000)),
             "{error}"
         );
     }
@@ -473,6 +599,8 @@ mod tests {
     #[test]
     fn paths_stay_inside_the_folder() {
         assert_eq!(safe_path("../a\\b//./c.mkv"), "a/b/c.mkv");
+        assert_eq!(safe_path("C:\\Film: Part 2.mkv"), "C_/Film_ Part 2.mkv");
+        assert_eq!(unique(safe_path(".."), &mut BTreeSet::new()), "unnamed");
     }
 
     #[test]
