@@ -31,6 +31,9 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use connection::{Job, Outcome, Owner, Session};
 pub use error::{ConnectFailure, IoFailure, NntpError};
 pub use reply::Violation;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub use reply::fuzzing;
 
 /// A news server and an account on it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

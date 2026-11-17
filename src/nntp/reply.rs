@@ -191,6 +191,65 @@ impl Replies {
     }
 }
 
+/// Drives the parser from bytes alone, for the fuzz target. Not part of the API.
+#[cfg(fuzzing)]
+pub mod fuzzing {
+    pub use super::Violation;
+    use super::{Expect, MAX_LINE, READ_CHUNK, Replies, Reply};
+
+    /// A reply as the parser read it.
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub enum Parsed {
+        /// A status line.
+        Line {
+            /// Its code, when it starts with one.
+            code: Option<u16>,
+            /// Its text.
+            text: String,
+        },
+        /// A body after 222.
+        Body(Vec<u8>),
+        /// The parser gave up.
+        Broken(Violation),
+    }
+
+    /// Feeds `input` in pieces of `chunks` sizes, cycling, with each reply in turn read as the
+    /// answer to BODY when `bodies` says so, cycling, and to a one-line command otherwise.
+    /// Returns every whole reply in order, stopping at the first violation.
+    ///
+    /// # Panics
+    ///
+    /// When the parser holds more bytes than its caps allow.
+    pub fn parse(input: &[u8], chunks: &[usize], bodies: &[bool], max_body: usize) -> Vec<Parsed> {
+        let mut parser = Replies::new(max_body);
+        let mut out = Vec::new();
+        let (mut sizes, mut kinds) = (chunks.iter().cycle(), bodies.iter().cycle());
+        let mut expect = || if kinds.next().copied().unwrap_or(false) { Expect::Body } else { Expect::Line };
+        let mut next = expect();
+        let mut rest = input;
+        while !rest.is_empty() {
+            let size = sizes.next().copied().unwrap_or(rest.len()).clamp(1, READ_CHUNK);
+            let (piece, after) = rest.split_at(size.min(rest.len()));
+            rest = after;
+            parser.feed(piece);
+            loop {
+                match parser.next(next) {
+                    Ok(Some(Reply::Line(status))) => out.push(Parsed::Line { code: status.code, text: status.text }),
+                    Ok(Some(Reply::Body(body))) => out.push(Parsed::Body(body)),
+                    Ok(None) => break,
+                    Err(violation) => {
+                        out.push(Parsed::Broken(violation));
+                        return out;
+                    }
+                }
+                next = expect();
+            }
+            assert!(parser.buffered() <= max_body + MAX_LINE + READ_CHUNK, "the parser holds {}", parser.buffered());
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

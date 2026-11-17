@@ -1,0 +1,22 @@
+[package]
+name = "usenet-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+usenet = { path = ".." }
+
+[[bin]]
+name = "nntp_reply"
+path = "fuzz_targets/nntp_reply.rs"
+test = false
+doc = false
+bench = false
+
+# Not part of the crate's workspace.
+[workspace]
