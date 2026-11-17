@@ -297,6 +297,8 @@ enum Then {
 struct InFlight(AtomicU64);
 
 fn serve(inner: &Arc<Inner>, stream: TcpStream) -> std::io::Result<()> {
+    // As a real server does, or a reply's last piece waits on the client's delayed ACK.
+    stream.set_nodelay(true)?;
     let mut out = stream.try_clone()?;
     if inner.down.load(Ordering::Relaxed) {
         return out.write_all(b"502 service unavailable\r\n");
