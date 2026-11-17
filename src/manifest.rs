@@ -1,5 +1,5 @@
 //! A resolved release: its output files, and which bytes of which article land where.
-//! The engine stores it with each download and reads it back on every resume.
+//! Store it to read the release again later without resolving it again.
 
 use serde::{Deserialize, Serialize};
 

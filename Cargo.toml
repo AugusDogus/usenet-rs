@@ -1,9 +1,14 @@
 [package]
-name = "newsreel-usenet"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+name = "usenet"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
 description = "Reads Usenet releases as files: NNTP, yEnc, NZB, and stored RAR layouts"
+repository = "https://github.com/AugusDogus/usenet-rs"
+readme = "README.md"
+keywords = ["usenet", "nntp", "yenc", "nzb", "rar"]
+categories = ["network-programming", "parser-implementations", "encoding"]
 
 [features]
 # A loopback NNTP server and postings, for tests.

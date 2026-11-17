@@ -63,7 +63,7 @@ impl fmt::Display for ResolveError {
                 f,
                 "the NZB holds {found} of the {expected} bytes of {name}; volumes are missing or out of order"
             ),
-            Self::Empty => f.write_str("the NZB holds no files newsreel can read"),
+            Self::Empty => f.write_str("the NZB holds no files this crate can read"),
         }
     }
 }

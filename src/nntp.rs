@@ -20,7 +20,7 @@ pub struct Server {
     pub tls: bool,
     pub username: String,
     pub password: String,
-    /// The most connections newsreel opens to this server.
+    /// The most connections the pool opens to this server.
     #[serde(default = "eight")]
     pub connections: u16,
     /// Lower is tried first, as in SABnzbd. Backup servers get a higher number.
