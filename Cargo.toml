@@ -1,6 +1,6 @@
 [package]
 name = "usenet"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -9,6 +9,7 @@ repository = "https://github.com/AugusDogus/usenet-rs"
 readme = "README.md"
 keywords = ["usenet", "nntp", "yenc", "nzb", "rar"]
 categories = ["network-programming", "parser-implementations", "encoding"]
+exclude = ["/fuzz", "/.github"]
 
 [features]
 # A loopback NNTP server and postings, for tests.

@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Fuzz longer once a week.
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -20,6 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macos-15 is arm64, so it runs the NEON yEnc path.
         runner: [ubuntu-24.04, macos-15, windows-latest]
     runs-on: ${{ matrix.runner }}
     steps:
@@ -28,9 +32,30 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
 
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
   msrv:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install 1.88 --profile minimal
-      - run: cargo +1.88 check --all-features
+      - run: cargo +1.88 check --all-features --all-targets
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [yenc, nzb, nntp_reply, rar, manifest]
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install nightly --profile minimal
+      - run: cargo +nightly install cargo-fuzz --locked
+      - name: Fuzz for a minute, or ten on the weekly run
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=${{ github.event_name == 'schedule' && 600 || 60 }} -rss_limit_mb=2048
