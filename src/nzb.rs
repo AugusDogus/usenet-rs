@@ -1,7 +1,10 @@
 //! NZB documents: the files of a release and the articles that hold them.
 
+use std::borrow::Cow;
 use std::fmt;
+use std::str::FromStr;
 
+use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 use sha1::{Digest, Sha1};
@@ -9,6 +12,7 @@ use sha1::{Digest, Sha1};
 /// One part of a posted file. Reposts can list several message-IDs for the same part.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Segment {
+    /// The part's number within its file, from 1.
     pub number: u32,
     /// Encoded article size the poster reported.
     pub bytes: u64,
@@ -16,37 +20,120 @@ pub struct Segment {
     pub message_ids: Vec<String>,
 }
 
+/// One posted file of a release.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct NzbFile {
+    /// The article subject the file was posted under.
     pub subject: String,
     /// The quoted name in the subject, or the subject. May be blank or obfuscated.
     pub filename: String,
     /// `k` of a `[k/N]` subject prefix.
     pub post_index: Option<u32>,
-    /// Sorted by number.
+    /// Sorted by number, one per number. Never empty.
     pub segments: Vec<Segment>,
 }
 
+/// A parsed NZB: a release's metadata and its files.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Nzb {
+    /// `<meta type="key">value</meta>` entries of the head, in document order.
     pub meta: Vec<(String, String)>,
+    /// The files that list at least one segment, in document order.
     pub files: Vec<NzbFile>,
     /// SHA-1 of the document, which names the release.
     pub sha1: [u8; 20],
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct NzbError(pub String);
+/// Why a document is not a usable NZB.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum NzbError {
+    /// The document is not well-formed XML.
+    Xml {
+        /// Byte offset in the document where the problem starts.
+        position: u64,
+        /// What the XML parser found.
+        source: XmlError,
+    },
+    /// The document has no `<nzb>` element.
+    NotNzb {
+        /// The document's first element, if it has one.
+        root: Option<String>,
+    },
+    /// A `<segment>` comes before any `<file>`, so it belongs to no file.
+    SegmentOutsideFile {
+        /// The segment's number.
+        number: u32,
+    },
+    /// A `<segment>` lists no message-ID.
+    MissingMessageId {
+        /// The file name from the segment's `<file>` subject.
+        file: String,
+        /// The segment's number.
+        number: u32,
+    },
+    /// No `<file>` lists any segments.
+    NoFiles {
+        /// How many `<file>` elements the document has.
+        files: usize,
+    },
+}
 
 impl fmt::Display for NzbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "not a usable NZB: {}", self.0)
+        match self {
+            Self::Xml { position, source } => write!(
+                f,
+                "the NZB is not well-formed XML at byte {position} ({source}); \
+                 the file is damaged or is not an NZB, so download it again"
+            ),
+            Self::NotNzb { root: Some(root) } => write!(
+                f,
+                "the document is <{root}>, not <nzb>, so it is not an NZB; \
+                 an indexer may have sent an error page instead"
+            ),
+            Self::NotNzb { root: None } => f.write_str("the document has no XML elements, so it is not an NZB"),
+            Self::SegmentOutsideFile { number } => {
+                write!(f, "the NZB lists segment {number} outside any <file>, so the release's files cannot be known")
+            }
+            Self::MissingMessageId { file, number } => write!(
+                f,
+                "segment {number} of {file:?} in the NZB has no message-ID, so that part of the file cannot be fetched"
+            ),
+            Self::NoFiles { files } => {
+                write!(f, "the NZB has {files} <file> elements but none lists a segment, so there is nothing to fetch")
+            }
+        }
     }
 }
 
-impl std::error::Error for NzbError {}
+impl std::error::Error for NzbError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Xml { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+/// A problem the XML parser found. Its [`Display`](fmt::Display) says what it is.
+#[derive(Clone, Debug)]
+pub struct XmlError(quick_xml::Error);
+
+impl fmt::Display for XmlError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for XmlError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
 
 impl Nzb {
+    /// The value of the first `<meta>` entry of type `key`.
     pub fn meta(&self, key: &str) -> Option<&str> {
         self.meta.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
@@ -56,23 +143,63 @@ impl Nzb {
         self.meta("name").or_else(|| self.meta("title")).filter(|t| !t.trim().is_empty())
     }
 
+    /// Parses an NZB document.
+    ///
+    /// Invalid UTF-8 is replaced, not rejected. Files without segments are dropped. A
+    /// file's segments are sorted by number, and segments that share a number, as reposts
+    /// do, are merged into one with every distinct message-ID in document order.
+    ///
+    /// ```
+    /// let doc = br#"<?xml version="1.0" encoding="UTF-8"?>
+    /// <nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+    ///   <head><meta type="name">Big.Buck.Bunny</meta></head>
+    ///   <file poster="p" date="1" subject="[1/1] - &quot;bbb.mkv&quot; yEnc (1/2)">
+    ///     <groups><group>alt.binaries.test</group></groups>
+    ///     <segments>
+    ///       <segment bytes="739" number="2">b@example</segment>
+    ///       <segment bytes="740" number="1">a@example</segment>
+    ///     </segments>
+    ///   </file>
+    /// </nzb>"#;
+    /// let nzb = usenet::Nzb::parse(doc)?;
+    /// assert_eq!(nzb.title(), Some("Big.Buck.Bunny"));
+    /// let file = &nzb.files[0];
+    /// assert_eq!((file.filename.as_str(), file.post_index), ("bbb.mkv", Some(1)));
+    /// assert_eq!(file.segments[0].message_ids, ["a@example"]);
+    ///
+    /// assert!(matches!(usenet::Nzb::parse(b"<error code=\"100\"/>"), Err(usenet::nzb::NzbError::NotNzb { .. })));
+    /// # Ok::<(), usenet::nzb::NzbError>(())
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self, NzbError> {
-        let text = String::from_utf8_lossy(bytes);
+        // `from_utf8_lossy` checks byte by byte; `from_utf8` is many times faster on valid input.
+        let text = match std::str::from_utf8(bytes) {
+            Ok(text) => Cow::Borrowed(text),
+            Err(_) => String::from_utf8_lossy(bytes),
+        };
         let mut reader = Reader::from_str(&text);
         let mut meta = Vec::new();
         let mut files: Vec<NzbFile> = Vec::new();
+        let mut file_elements = 0;
         let mut text_target: Option<Target> = None;
         let mut buffer = String::new();
+        let mut root: Option<String> = None;
         let mut seen_nzb = false;
         loop {
-            let event = reader.read_event().map_err(|e| NzbError(format!("malformed XML: {e}")))?;
+            let event = reader
+                .read_event()
+                .map_err(|source| NzbError::Xml { position: reader.error_position(), source: XmlError(source) })?;
             match event {
                 Event::Start(ref e) | Event::Empty(ref e) => {
                     let empty = matches!(event, Event::Empty(_));
-                    match local(e).as_str() {
+                    let name = e.local_name();
+                    if root.is_none() {
+                        root = Some(name.as_ref().to_owned());
+                    }
+                    match name.as_ref() {
                         "nzb" => seen_nzb = true,
                         "file" => {
                             let subject = attr(e, "subject").unwrap_or_default();
+                            file_elements += 1;
                             files.push(NzbFile {
                                 filename: filename_from_subject(&subject),
                                 post_index: post_index(&subject),
@@ -85,8 +212,7 @@ impl Nzb {
                             buffer.clear();
                         }
                         "segment" if !empty => {
-                            let number = attr(e, "number").and_then(|n| n.parse().ok());
-                            let bytes = attr(e, "bytes").and_then(|n| n.parse().ok()).unwrap_or(0);
+                            let (number, bytes) = segment_attrs(e);
                             text_target = number.map(|number| Target::Segment { number, bytes });
                             buffer.clear();
                         }
@@ -114,14 +240,14 @@ impl Nzb {
                 Event::End(_) => match text_target.take() {
                     Some(Target::Meta(key)) => meta.push((key, buffer.trim().to_string())),
                     Some(Target::Segment { number, bytes }) => {
-                        let id = buffer.trim().trim_start_matches('<').trim_end_matches('>').to_string();
+                        let id = buffer.trim().trim_start_matches('<').trim_end_matches('>');
                         let Some(file) = files.last_mut() else {
-                            return Err(NzbError("a segment is outside any <file>".into()));
+                            return Err(NzbError::SegmentOutsideFile { number });
                         };
                         if id.is_empty() {
-                            return Err(NzbError(format!("segment {number} of {:?} has no message-ID", file.filename)));
+                            return Err(NzbError::MissingMessageId { file: file.filename.clone(), number });
                         }
-                        file.segments.push(Segment { number, bytes, message_ids: vec![id] });
+                        file.segments.push(Segment { number, bytes, message_ids: vec![id.to_string()] });
                     }
                     None => {}
                 },
@@ -130,29 +256,26 @@ impl Nzb {
             }
         }
         if !seen_nzb {
-            return Err(NzbError("the document has no <nzb> element".into()));
+            return Err(NzbError::NotNzb { root });
         }
         files.retain(|f| !f.segments.is_empty());
         if files.is_empty() {
-            return Err(NzbError("it lists no files with segments".into()));
+            return Err(NzbError::NoFiles { files: file_elements });
         }
         for f in &mut files {
             // Stable, so a repost's message-IDs keep the order the NZB lists them in.
             f.segments.sort_by_key(|s| s.number);
-            let mut merged: Vec<Segment> = Vec::with_capacity(f.segments.len());
-            for s in f.segments.drain(..) {
-                match merged.last_mut() {
-                    Some(m) if m.number == s.number => {
-                        for id in s.message_ids {
-                            if !m.message_ids.contains(&id) {
-                                m.message_ids.push(id);
-                            }
-                        }
-                    }
-                    _ => merged.push(s),
+            f.segments.dedup_by(|later, kept| {
+                if later.number != kept.number {
+                    return false;
                 }
-            }
-            f.segments = merged;
+                for id in later.message_ids.drain(..) {
+                    if !kept.message_ids.contains(&id) {
+                        kept.message_ids.push(id);
+                    }
+                }
+                true
+            });
         }
         Ok(Self { meta, files, sha1: Sha1::digest(bytes).into() })
     }
@@ -163,17 +286,38 @@ enum Target {
     Segment { number: u32, bytes: u64 },
 }
 
-fn local(e: &BytesStart<'_>) -> String {
-    e.local_name().as_ref().to_string()
+/// The attributes of `e`. Duplicates are not reported: only the first of each name is read,
+/// and checking costs an allocation per element.
+fn attributes<'a>(e: &'a BytesStart<'_>) -> impl Iterator<Item = Attribute<'a>> {
+    let mut attributes = e.attributes();
+    attributes.with_checks(false);
+    attributes.flatten()
 }
 
+/// The normalized value of the first attribute named `name`.
 fn attr(e: &BytesStart<'_>, name: &str) -> Option<String> {
-    e.attributes()
-        .flatten()
+    attributes(e)
         .find(|a| a.key.local_name().as_ref() == name)
         .and_then(|a| a.normalized_value(XmlVersion::default()).ok().map(|v| v.into_owned()))
 }
 
+/// A segment's `number`, and its `bytes` or 0, each from the first attribute of that name.
+fn segment_attrs(e: &BytesStart<'_>) -> (Option<u32>, u64) {
+    fn parse<T: FromStr>(a: &Attribute<'_>) -> Option<T> {
+        a.normalized_value(XmlVersion::default()).ok()?.parse().ok()
+    }
+    let (mut number, mut bytes) = (None, None);
+    for a in attributes(e) {
+        match a.key.local_name().as_ref() {
+            "number" if number.is_none() => number = Some(parse(&a)),
+            "bytes" if bytes.is_none() => bytes = Some(parse(&a)),
+            _ => {}
+        }
+    }
+    (number.flatten(), bytes.flatten().unwrap_or(0))
+}
+
+/// The file name a subject carries: its first `"quoted"` part, or else the whole subject, trimmed.
 pub fn filename_from_subject(subject: &str) -> String {
     let quoted = subject.split('"').nth(1).filter(|_| subject.matches('"').count() >= 2);
     quoted.unwrap_or(subject).trim().to_string()
@@ -181,7 +325,7 @@ pub fn filename_from_subject(subject: &str) -> String {
 
 fn post_index(subject: &str) -> Option<u32> {
     let open = subject.find('[')?;
-    let (k, rest) = subject[open + 1..].split_once('/')?;
+    let (k, rest) = subject.get(open + 1..)?.split_once('/')?;
     rest.split_once(']')?;
     k.trim().parse().ok()
 }
@@ -238,5 +382,33 @@ mod tests {
     fn subjects_without_quotes_are_the_name() {
         assert_eq!(filename_from_subject("WKelZy6v.mkv yEnc (1/5)"), "WKelZy6v.mkv yEnc (1/5)");
         assert_eq!(filename_from_subject(""), "");
+    }
+
+    #[test]
+    fn errors_say_what_is_wrong() {
+        let parse = |s: &str| Nzb::parse(s.as_bytes()).map(|_| ()).unwrap_err();
+        assert!(matches!(parse("<error code=\"100\"/>"), NzbError::NotNzb { root: Some(r) } if r == "error"));
+        assert!(matches!(parse(""), NzbError::NotNzb { root: None }));
+        assert!(matches!(parse("<nzb><file/><file subject=\"x\"></file></nzb>"), NzbError::NoFiles { files: 2 }));
+        assert!(matches!(
+            parse("<nzb><segment number=\"3\">a@x</segment></nzb>"),
+            NzbError::SegmentOutsideFile { number: 3 }
+        ));
+        assert!(matches!(
+            parse("<nzb><file subject='\"a.rar\"'><segment number=\"4\"> &lt;&gt; </segment></file></nzb>"),
+            NzbError::MissingMessageId { file, number: 4 } if file == "a.rar"
+        ));
+        let error = parse("<nzb><file></nzb>");
+        assert!(matches!(error, NzbError::Xml { position: 11, .. }), "{error:?}");
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn segments_without_a_number_are_skipped() {
+        let nzb = Nzb::parse(
+            br#"<nzb><file subject="x"><segment bytes="5">a@x</segment><segment number="1">b@x</segment></file></nzb>"#,
+        )
+        .unwrap();
+        assert_eq!(nzb.files[0].segments, [Segment { number: 1, bytes: 0, message_ids: vec!["b@x".into()] }]);
     }
 }
