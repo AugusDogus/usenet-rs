@@ -376,9 +376,19 @@ fn fields5(mut r: Reader<'_>) -> Result<(Block, u64), Stop> {
     Ok((block, data_size))
 }
 
-/// RAR4 block types whose header CRC unrar does not check: old authenticity
-/// verification and old digital signature blocks.
-const RAR4_UNCHECKED: [u8; 2] = [0x76, 0x79];
+/// The bytes a RAR4 header's CRC covers, as unrar checks them, or None where it does not:
+/// old authenticity and signature blocks, and the old Unix owner block, whose names sit
+/// outside its declared size. A RAR 2.x comment embedded in a main or comment header is
+/// left out; the CRC covers the 13 bytes before it.
+fn crc4_span(header: &[u8], kind: u8, flags: u16) -> Option<&[u8]> {
+    let embedded_comment = (kind == 0x73 && flags & 0x0002 != 0) || kind == 0x75;
+    match kind {
+        0x76 | 0x79 => None,
+        0x77 if header.get(11..13) == Some(&[0x01, 0x01]) => None,
+        _ if embedded_comment => Some(&header[2..header.len().min(13)]),
+        _ => Some(&header[2..]),
+    }
+}
 
 fn block4(b: &[u8], at: usize, checksums: Checksums) -> Result<(Block, u64), Stop> {
     let mut r = Reader { b, pos: at };
@@ -390,9 +400,9 @@ fn block4(b: &[u8], at: usize, checksums: Checksums) -> Result<(Block, u64), Sto
         return Err(Stop::Malformed(Defect::TinyHeader { size }));
     }
     let header = Reader { b, pos: at }.bytes(usize::from(size))?;
-    if !RAR4_UNCHECKED.contains(&kind) {
-        // The low 16 bits of the CRC32 of the header after its CRC field.
-        checksums.check(u32::from(stored), crc32fast::hash(&header[2..]) & 0xffff)?;
+    if let Some(span) = crc4_span(header, kind, flags) {
+        // The low 16 bits of a CRC32.
+        checksums.check(u32::from(stored), crc32fast::hash(span) & 0xffff)?;
     }
     let end = (at + header.len()) as u64;
     let (block, data_size) = fields4(Reader { b: header, pos: 7 }, kind, flags, end).map_err(Stop::within_header)?;
@@ -820,6 +830,23 @@ mod tests {
         volume[at] ^= 0x20;
         let r = scan_all(&volume, volume.len()).await.0;
         assert!(matches!(r, Err(ScanError::Rar(RarError::Corrupt { at: 20, .. }))), "{r:?}");
+    }
+
+    #[tokio::test]
+    async fn an_old_comment_in_a_rar4_main_header_is_outside_its_checksum() {
+        let mut volume = b"Rar!\x1a\x07\x00".to_vec();
+        let mut main = vec![0, 0, 0x73, 0x03, 0x01, 20, 0];
+        main.extend([0; 6]);
+        main.extend(b"comment"); // the old comment block, inside the main header
+        let crc = (crc32fast::hash(&main[2..13]) & 0xffff) as u16;
+        main[..2].copy_from_slice(&crc.to_le_bytes());
+        volume.extend(&main);
+        assert_eq!(scan_all(&volume, volume.len()).await.0.map(|v| v.first), Ok(Some(true)));
+        volume[7 + 15] ^= 1;
+        assert!(scan_all(&volume, volume.len()).await.0.is_ok(), "the comment is not covered");
+        volume[7 + 10] ^= 1;
+        let r = scan_all(&volume, volume.len()).await.0;
+        assert!(matches!(r, Err(ScanError::Rar(RarError::Corrupt { at: 7, .. }))), "{r:?}");
     }
 
     #[tokio::test]
