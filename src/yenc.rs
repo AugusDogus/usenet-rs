@@ -395,26 +395,11 @@ mod data {
         }
     }
 
-    /// The output for an input of `len` bytes, which never decodes to more bytes than it has.
-    /// The spare `CHUNK` bytes let a chunk store all 64 bytes before it knows how many it keeps.
-    struct Out {
-        buf: Vec<u8>,
-        len: usize,
-    }
-
-    impl Out {
-        fn push(&mut self, b: u8) {
-            if let Some(slot) = self.buf.get_mut(self.len) {
-                *slot = b;
-                self.len += 1;
-            }
-        }
-    }
-
     #[inline(always)]
     pub(super) fn run<C: Classify>(body: &[u8], start: usize) -> Decoded {
-        let room = body.len().saturating_sub(start) + CHUNK;
-        let mut out = Out { buf: vec![0; room], len: 0 };
+        // The data never decodes to more bytes than it has, and a chunk appends `CHUNK` bytes
+        // before it cuts back to those it keeps, so this never reallocates.
+        let mut out = Vec::with_capacity(body.len().saturating_sub(start) + CHUNK);
         let mut state = State { line_start: true, escape: false };
         let mut i = start;
         let mut scratch = [0u8; 2 * CHUNK];
@@ -430,23 +415,18 @@ mod data {
                 }
                 let (next, trailer) = scalar(body, i, i + CHUNK, &mut state, &mut out);
                 if trailer.is_some() {
-                    return finish(out, trailer);
+                    return Decoded { data: out, trailer };
                 }
                 i = next;
             }
         }
         let (_, trailer) = scalar(body, i, body.len(), &mut state, &mut out);
-        finish(out, trailer)
-    }
-
-    fn finish(mut out: Out, trailer: Option<usize>) -> Decoded {
-        out.buf.truncate(out.len);
-        Decoded { data: out.buf, trailer }
+        Decoded { data: out, trailer }
     }
 
     /// The reference loop. Reads `body[i..stop]`, finishing an escape that straddles `stop`,
     /// and returns where it stopped and where the trailer starts if it reached one.
-    fn scalar(body: &[u8], mut i: usize, stop: usize, state: &mut State, out: &mut Out) -> (usize, Option<usize>) {
+    fn scalar(body: &[u8], mut i: usize, stop: usize, state: &mut State, out: &mut Vec<u8>) -> (usize, Option<usize>) {
         if state.escape {
             out.push(body.get(i).copied().unwrap_or(0).wrapping_sub(106));
             state.escape = false;
@@ -482,7 +462,13 @@ mod data {
     /// scalar loop must read it: when it may hold a trailer, or an `=` escapes another `=`.
     /// `next` is the byte after the chunk.
     #[inline(always)]
-    fn chunk_step(m: Masks, next: Option<u8>, state: &mut State, minus42: &mut [u8; 2 * CHUNK], out: &mut Out) -> bool {
+    fn chunk_step(
+        m: Masks,
+        next: Option<u8>,
+        state: &mut State,
+        minus42: &mut [u8; 2 * CHUNK],
+        out: &mut Vec<u8>,
+    ) -> bool {
         let pending = u64::from(state.escape);
         if m.eq & ((m.eq << 1) | pending) != 0 {
             return false;
@@ -504,15 +490,15 @@ mod data {
             minus42[at] = minus42[at].wrapping_sub(64);
             e &= e - 1;
         }
-        // Copy the runs between skipped bytes. Each copy moves a whole chunk's worth, of which
-        // the run is a prefix; the rest is overwritten by the next run or cut by `finish`.
-        // `out.len` never passes the input read so far, and `out.buf` has `CHUNK` spare bytes.
+        // Copy the runs between skipped bytes. A fixed-size copy is much faster than one of the
+        // run's length, so each appends a whole chunk's worth and then cuts back to the run.
         let mut from = 0;
         let mut rest = skip;
         loop {
             let to = if rest == 0 { CHUNK } else { rest.trailing_zeros() as usize };
-            out.buf[out.len..out.len + CHUNK].copy_from_slice(&minus42[from..from + CHUNK]);
-            out.len += to - from;
+            let kept = out.len() + (to - from);
+            out.extend_from_slice(&minus42[from..from + CHUNK]);
+            out.truncate(kept);
             if rest == 0 {
                 break;
             }
