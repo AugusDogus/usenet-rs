@@ -24,8 +24,20 @@ impl Part {
 pub enum YencError {
     NoHeader,
     Header(String),
-    Length { name: String, expected: u64, actual: u64 },
-    Crc { name: String, begin: u64 },
+    Length {
+        name: String,
+        expected: u64,
+        actual: u64,
+    },
+    Crc {
+        name: String,
+        begin: u64,
+    },
+    /// The body ends before its `=yend` line, so data may be missing.
+    Truncated {
+        name: String,
+        begin: u64,
+    },
 }
 
 impl fmt::Display for YencError {
@@ -38,6 +50,12 @@ impl fmt::Display for YencError {
             }
             Self::Crc { name, begin } => {
                 write!(f, "yEnc CRC mismatch for {name:?} at byte {begin}; the article is corrupt")
+            }
+            Self::Truncated { name, begin } => {
+                write!(
+                    f,
+                    "yEnc data for {name:?} at byte {begin} ends without its =yend line; the article is cut short"
+                )
             }
         }
     }
@@ -148,15 +166,18 @@ pub fn decode(body: &[u8]) -> Result<Part, YencError> {
         }
         _ => {}
     }
-    if let Some(trailer) = trailer {
-        let trailer = String::from_utf8_lossy(trailer);
-        let tail = fields(&trailer);
-        let crc = get(&tail, "pcrc32").or(if multipart { None } else { get(&tail, "crc32") });
-        if let Some(crc) = crc.and_then(|c| u32::from_str_radix(c, 16).ok())
-            && crc != crc32fast::hash(&data)
-        {
-            return Err(YencError::Crc { name, begin });
-        }
+    let Some(trailer) = trailer else {
+        return Err(YencError::Truncated { name, begin });
+    };
+    let trailer = String::from_utf8_lossy(trailer);
+    let tail = fields(&trailer);
+    // A multipart `crc32` covers the whole file, so only `pcrc32` checks this part. A single
+    // part is the whole file.
+    let crc = if multipart { get(&tail, "pcrc32") } else { get(&tail, "crc32").or(get(&tail, "pcrc32")) };
+    if let Some(crc) = crc.and_then(|c| u32::from_str_radix(c, 16).ok())
+        && crc != crc32fast::hash(&data)
+    {
+        return Err(YencError::Crc { name, begin });
     }
     Ok(Part { name, file_size, begin, data })
 }
@@ -230,6 +251,28 @@ mod tests {
         body.splice(at..at + 11, *b"end=1536000");
         let part = decode(&body).unwrap();
         assert_eq!((part.begin, part.end()), (6_144_000, 6_579_419));
+    }
+
+    #[test]
+    fn a_body_cut_before_its_trailer_is_truncated() {
+        let body = encode(&[7u8; 300], "x", 300, 0, Some(1));
+        let at = body.windows(6).position(|w| w == b"=yend ").unwrap();
+        assert_eq!(decode(&body[..at]), Err(YencError::Truncated { name: "x".into(), begin: 0 }));
+        // A wrong `end` on a last part is tolerated, so the trailer is what shows it is whole.
+        let mut last = encode(&[7u8; 300], "x", 1300, 1000, Some(2));
+        let at = last.windows(8).position(|w| w == b"end=1300").unwrap();
+        last.splice(at..at + 8, *b"end=0500");
+        let cut = last.windows(6).position(|w| w == b"=yend ").unwrap() - 100;
+        assert!(matches!(decode(&last[..cut]), Err(YencError::Truncated { .. })));
+    }
+
+    #[test]
+    fn a_single_part_checks_the_file_crc() {
+        let mut body = encode(b"hello", "x", 5, 0, None);
+        let crc = format!("{:08x}", crc32fast::hash(b"hello"));
+        let at = body.windows(7).position(|w| w == b"pcrc32=").unwrap();
+        body.splice(at.., format!("pcrc32=00000001 crc32={crc}\r\n").bytes());
+        assert_eq!(decode(&body).unwrap().data, b"hello");
     }
 
     #[test]
