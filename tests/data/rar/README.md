@@ -17,3 +17,10 @@ this crate's MIT license.
 | `compressed` | `-m3` | compressed data |
 | `enc_data` | `-m0 -v16k -pSECRET` | encrypted file data, readable headers |
 | `enc_headers` | `-m0 -v16k -hpSECRET` | encrypted headers |
+
+## Real postings
+
+`real/` holds the first 512 bytes of two volumes of a Usenet posting of *Big Buck Bunny*
+(480p, a stored RAR4 set): the RAR headers and the start of the QuickTime file after
+them. Big Buck Bunny is (c) 2008 Blender Foundation, www.bigbuckbunny.org, licensed
+under CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/).

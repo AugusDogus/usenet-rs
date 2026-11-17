@@ -193,3 +193,23 @@ async fn a_cut_volume_is_malformed() {
         assert!(matches!(r, Err(ScanError::Rar(RarError::Malformed { defect: d, .. })) if d == defect), "{r:?}");
     }
 }
+
+/// The first 512 bytes of two volumes of a real posting of Big Buck Bunny, a stored RAR4
+/// set of 50 MB volumes: everything `scan` needs is in them, so nothing more is read.
+#[tokio::test]
+async fn a_real_release_scans_from_its_first_bytes() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/rar/real");
+    for (volume, first) in [(1, true), (2, false)] {
+        let head = std::fs::read(dir.join(format!("big.buck.bunny.480p.h264.part0{volume}.rar.head"))).unwrap();
+        let scanned = rar::scan(head, 50_000_000, |at, _| std::future::ready(Err(format!("read at {at}")))).await;
+        let v = scanned.unwrap();
+        assert_eq!((v.format, v.number, v.first), (Format::Rar4, None, Some(first)));
+        let entries: Vec<_> = v
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.stored, e.split_before, e.split_after, e.data_offset, e.packed_size))
+            .collect();
+        assert_eq!(entries, [("big_buck_bunny_480p_h264.mov", true, !first, true, 80, 49_999_900)]);
+        assert_eq!(v.entries[0].unpacked_size, 249_229_883);
+    }
+}
