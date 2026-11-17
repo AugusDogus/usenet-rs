@@ -903,4 +903,86 @@ mod tests {
         let reference = data::decode(data::Kernel::Scalar, b"ab=", 0);
         assert_eq!((reference.data, reference.trailer), (vec![55, 56, 150], None));
     }
+
+    fn sample(name: &str) -> Vec<u8> {
+        let path = format!("{}/tests/data/yenc/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+    }
+
+    /// Articles written by `tests/data/yenc/generate.py`, an encoder independent of this crate.
+    const SAMPLES: &[(&str, &str, u64, u64, usize, u32)] = &[
+        ("multipart-first.yenc", "sample.part01.rar", 1_900_000, 0, 768_000, 0x7775_c6b2),
+        ("multipart-last.yenc", "sample.part01.rar", 1_900_000, 1_536_000, 364_000, 0x6f32_2e54),
+        ("wrong-end.yenc", "sample.part02.rar", 50_000, 40_000, 10_000, 0xded2_6014),
+        ("single-part.yenc", "sample.vol00+01.par2", 40_432, 0, 40_432, 0xc1a3_da1a),
+        ("single.yenc", "sample.nfo", 6_000, 0, 6_000, 0xf47f_128c),
+        ("escapes.yenc", "sample.part03.rar", 40_000, 10_000, 30_000, 0x1404_f137),
+    ];
+
+    #[test]
+    fn decodes_the_sample_articles() {
+        for &(file, name, file_size, begin, len, crc) in SAMPLES {
+            let body = sample(file);
+            let part = decode(&body).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert_eq!(
+                (part.name.as_str(), part.file_size, part.begin, part.data.len()),
+                (name, file_size, begin, len)
+            );
+            assert_eq!(crc32fast::hash(&part.data), crc, "{file}");
+            assert_kernels_agree(&body, 0);
+
+            let trailer = body.windows(6).rposition(|w| w == b"=yend ").unwrap();
+            assert!(matches!(decode(&body[..trailer]), Err(YencError::Truncated { .. })), "{file}");
+            let mut damaged = body.clone();
+            let at = trailer - 10;
+            damaged[at] = if damaged[at] == b'a' { b'b' } else { b'a' };
+            assert!(matches!(decode(&damaged), Err(YencError::Crc { .. } | YencError::Length { .. })), "{file}");
+        }
+    }
+
+    /// A bounded, deterministic stand-in for the fuzz target, so CI catches regressions on stable.
+    #[test]
+    fn mutated_articles_decode_without_panics_and_kernels_agree() {
+        const INSERTS: &[&[u8]] = &[b"=", b"\r\n", b"\n", b"\r", b"=y", b"\r\n=yend size=1\r\n", b"==", b"y", b"\0"];
+        let bodies: Vec<Vec<u8>> = SAMPLES
+            .iter()
+            .map(|(file, ..)| {
+                let mut body = sample(file);
+                // Keep the big samples small: their header and some data, then their trailer.
+                if body.len() > 50_000 {
+                    let trailer = body.windows(6).rposition(|w| w == b"=yend ").unwrap();
+                    body.drain(20_000..trailer);
+                }
+                body
+            })
+            .collect();
+        let mut rng = Rng::new(4);
+        for _ in 0..2000 {
+            let mut body = bodies[rng.below(bodies.len())].clone();
+            for _ in 0..1 + rng.below(8) {
+                let at = rng.below(body.len() + 1);
+                match rng.below(5) {
+                    0 => {
+                        if let Some(b) = body.get_mut(at) {
+                            *b ^= 1 << rng.below(8);
+                        }
+                    }
+                    1 => drop(body.splice(at..at, INSERTS[rng.below(INSERTS.len())].iter().copied())),
+                    2 => drop(body.drain(at..(at + rng.below(300)).min(body.len()))),
+                    3 => body.truncate(at),
+                    _ => {
+                        let end = (at + rng.below(300)).min(body.len());
+                        let copy = body[at..end].to_vec();
+                        let to = rng.below(body.len() + 1);
+                        body.splice(to..to, copy);
+                    }
+                }
+            }
+            if let Ok(part) = decode(&body) {
+                assert!(part.end() <= part.file_size);
+            }
+            let start = rng.below(body.len().min(200) + 1);
+            assert_kernels_agree(&body, start);
+        }
+    }
 }

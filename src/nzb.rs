@@ -411,4 +411,90 @@ mod tests {
         .unwrap();
         assert_eq!(nzb.files[0].segments, [Segment { number: 1, bytes: 0, message_ids: vec!["b@x".into()] }]);
     }
+
+    fn sample(name: &str) -> Vec<u8> {
+        let path = format!("{}/tests/data/nzb/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+    }
+
+    /// Real NZBs of freely licensed films, with the indexer's metadata stripped.
+    const SAMPLES: &[(&str, &str, usize, usize, &str)] = &[
+        // Its `<file>`s have no subject; the indexer put the subject in `poster`.
+        (
+            "Big.Buck.Bunny.2008.1080p.x264-60fps.Surround.nzb",
+            "Big.Buck.Bunny.2008.1080p.x264-60fps.Surround",
+            52,
+            2520,
+            "",
+        ),
+        ("BigBuckBunny.640x360.m4v.nzb", "BigBuckBunny.640x360.m4v", 9, 193, "BigBuckBunny.640x360.m4v.vol-01.par2"),
+        ("big_buck_bunny_480p_h264.nzb", "big.buck.bunny.480p.h264", 17, 387, "big_buck_bunny_480p_h264.mov.nzb"),
+        (
+            "nosferatu.1922.web.h264-rbb.nzb",
+            "nosferatu.1922.web.h264-rbb",
+            8,
+            1066,
+            "nosferatu.1922.web.h264-rbb.vol-01.par2",
+        ),
+    ];
+
+    #[test]
+    fn parses_the_sample_nzbs() {
+        for &(file, title, files, segments, first) in SAMPLES {
+            let nzb = Nzb::parse(&sample(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert_eq!(nzb.title(), Some(title), "{file}");
+            assert_eq!(nzb.files.len(), files, "{file}");
+            assert_eq!(nzb.files.iter().map(|f| f.segments.len()).sum::<usize>(), segments, "{file}");
+            assert_eq!(nzb.files[0].filename, first, "{file}");
+            assert!(nzb.meta("password").is_none() && nzb.meta("indexer").is_none());
+        }
+    }
+
+    /// A bounded, deterministic stand-in for the fuzz target, so CI catches regressions on stable.
+    #[test]
+    fn mutated_nzbs_parse_without_panics() {
+        const INSERTS: &[&[u8]] = &[
+            b"<",
+            b">",
+            b"&",
+            b"&amp;",
+            b"&#x41;",
+            b"\"",
+            b"</segment>",
+            b"<segment number=\"1\">",
+            b"<file>",
+            b"\xff",
+        ];
+        let docs: Vec<Vec<u8>> = ["BigBuckBunny.640x360.m4v.nzb", "big_buck_bunny_480p_h264.nzb"].map(sample).into();
+        let mut state = 5u64;
+        let mut below = |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n.max(1) as u64) as usize
+        };
+        for _ in 0..1000 {
+            let mut doc = docs[below(docs.len())].clone();
+            for _ in 0..1 + below(8) {
+                let at = below(doc.len() + 1);
+                match below(4) {
+                    0 => {
+                        if let Some(b) = doc.get_mut(at) {
+                            *b ^= 1 << below(8);
+                        }
+                    }
+                    1 => drop(doc.splice(at..at, INSERTS[below(INSERTS.len())].iter().copied())),
+                    2 => drop(doc.drain(at..(at + below(200)).min(doc.len()))),
+                    _ => doc.truncate(at),
+                }
+            }
+            if let Ok(nzb) = Nzb::parse(&doc) {
+                for f in &nzb.files {
+                    assert!(!f.segments.is_empty());
+                    assert!(f.segments.windows(2).all(|w| w[0].number < w[1].number));
+                    assert!(f.segments.iter().all(|s| s.message_ids.iter().all(|id| !id.is_empty())));
+                }
+            }
+        }
+    }
 }

@@ -1,0 +1,551 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nzb PUBLIC "-//newzBin//DTD NZB 1.1//EN" "http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+
+<head>
+ <meta type="category">TV &gt; Documentary</meta>
+ <meta type="name">big.buck.bunny.480p.h264</meta>
+</head>
+
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [01/01] - &quot;big_buck_bunny_480p_h264.mov.nzb&quot; (1/1)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="43069" number="1">11476381178476171.CBAPMJKUT3@EJC05EMRGR.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [01/16] - &quot;big.buck.bunny.480p.h264.vol-01.par2&quot; (1/1)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="43572" number="1">11476380838638521.BC3B0OTEGN@EJBZZSAV21.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [02/16] - &quot;big.buck.bunny.480p.h264.part01.rar&quot; (1/66)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="781952" number="1">11476380838638554.G996JF6DK@EJBZZSAV2Y.newsup</segment>
+  <segment bytes="787703" number="2">21476380838638572.1OVX03TM7I@EJBZZSAV3G.newsup</segment>
+  <segment bytes="787523" number="3">31476380838638586.8OSAQAUD54@EJBZZSAV3U.newsup</segment>
+  <segment bytes="787762" number="4">41476380838638601.3ZJW2Q0HZR@EJBZZSAV49.newsup</segment>
+  <segment bytes="787815" number="5">51476380838638615.6Q7YQHT489@EJBZZSAV4N.newsup</segment>
+  <segment bytes="788317" number="6">61476380838638629.4JB685H05W@EJBZZSAV51.newsup</segment>
+  <segment bytes="788150" number="7">71476380838638645.5BH9OZE5CH@EJBZZSAV5H.newsup</segment>
+  <segment bytes="788457" number="8">81476380838638661.7JUH4KZEX0@EJBZZSAV5X.newsup</segment>
+  <segment bytes="787802" number="9">91476380838638675.1UEDECMKB9@EJBZZSAV6B.newsup</segment>
+  <segment bytes="787745" number="10">101476380838638689.6OL3BARIMI@EJBZZSAV6P.newsup</segment>
+  <segment bytes="787895" number="11">111476380838638703.CUX6REIVEH@EJBZZSAV73.newsup</segment>
+  <segment bytes="787561" number="12">121476380838638718.2MCIIAC6E2@EJBZZSAV7I.newsup</segment>
+  <segment bytes="787236" number="13">131476380838638732.8T5L16SGCD@EJBZZSAV7W.newsup</segment>
+  <segment bytes="787739" number="14">141476380838638746.65TUD6QLP1@EJBZZSAV8A.newsup</segment>
+  <segment bytes="794523" number="15">151476380838638759.3OM4329VRL@EJBZZSAV8N.newsup</segment>
+  <segment bytes="788066" number="16">161476380838638774.DSPMFVWQN9@EJBZZSAV92.newsup</segment>
+  <segment bytes="787989" number="17">171476380838638788.CKRI1GCFF3@EJBZZSAV9G.newsup</segment>
+  <segment bytes="788179" number="18">181476380838638802.CAA5ZOI7PW@EJBZZSAV9U.newsup</segment>
+  <segment bytes="788045" number="19">191476380838638817.1ACUQVMXJF@EJBZZSAVA9.newsup</segment>
+  <segment bytes="788363" number="20">201476380838638837.55F6NGIBVI@EJBZZSAVAT.newsup</segment>
+  <segment bytes="788404" number="21">211476380838638851.D1Y6SOPV1Q@EJBZZSAVB7.newsup</segment>
+  <segment bytes="787758" number="22">221476380838638865.600ENRL06T@EJBZZSAVBL.newsup</segment>
+  <segment bytes="786608" number="23">231476380838638879.AT3UQ12SLN@EJBZZSAVBZ.newsup</segment>
+  <segment bytes="787128" number="24">241476380838638893.29YPJACOO0@EJBZZSAVCD.newsup</segment>
+  <segment bytes="787695" number="25">251476380838638907.A9600I7V9M@EJBZZSAVCR.newsup</segment>
+  <segment bytes="787643" number="26">261476380838638921.4FSX1B8XGB@EJBZZSAVD5.newsup</segment>
+  <segment bytes="787475" number="27">271476380838638934.4JCDV4XX0O@EJBZZSAVDI.newsup</segment>
+  <segment bytes="787583" number="28">281476380838638948.85IMLKVV18@EJBZZSAVDW.newsup</segment>
+  <segment bytes="787177" number="29">291476380838638963.1JDLF71LNI@EJBZZSAVEB.newsup</segment>
+  <segment bytes="787261" number="30">301476380838638976.9T6HYC4BYR@EJBZZSAVEO.newsup</segment>
+  <segment bytes="787371" number="31">311476380838638990.83V3JET1KQ@EJBZZSAVF2.newsup</segment>
+  <segment bytes="787107" number="32">321476380838639008.3XA71PA87Y@EJBZZSAVFK.newsup</segment>
+  <segment bytes="787458" number="33">331476380838639022.5MCVKECUTI@EJBZZSAVFY.newsup</segment>
+  <segment bytes="787911" number="34">341476380838639036.4S24EF1L6M@EJBZZSAVGC.newsup</segment>
+  <segment bytes="787406" number="35">351476380838639050.2KBZYJ3IWP@EJBZZSAVGQ.newsup</segment>
+  <segment bytes="787187" number="36">361476380838639067.A0AMUUUJM8@EJBZZSAVH7.newsup</segment>
+  <segment bytes="787240" number="37">371476380838639080.125VU2VU5N@EJBZZSAVHK.newsup</segment>
+  <segment bytes="786742" number="38">381476380838639096.6JRTB6FW07@EJBZZSAVI0.newsup</segment>
+  <segment bytes="786892" number="39">391476380838639114.AZ414W99EV@EJBZZSAVII.newsup</segment>
+  <segment bytes="787543" number="40">401476380838639128.E9H7QAVW36@EJBZZSAVIW.newsup</segment>
+  <segment bytes="793129" number="41">411476380838639142.7YS3U33583@EJBZZSAVJA.newsup</segment>
+  <segment bytes="787111" number="42">421476380838639166.2B9JLGIRTW@EJBZZSAVJY.newsup</segment>
+  <segment bytes="786990" number="43">431476380838639180.7YEKJ9MWK3@EJBZZSAVKC.newsup</segment>
+  <segment bytes="787218" number="44">441476380838639194.CN5V58BTBR@EJBZZSAVKQ.newsup</segment>
+  <segment bytes="787561" number="45">451476380838639209.S5RY3H3V0@EJBZZSAVL5.newsup</segment>
+  <segment bytes="787527" number="46">461476380838639223.6L5THRUYWD@EJBZZSAVLJ.newsup</segment>
+  <segment bytes="787250" number="47">471476380838639237.ANS5YSVOZW@EJBZZSAVLX.newsup</segment>
+  <segment bytes="786884" number="48">481476380838639250.DGUMRUDFF6@EJBZZSAVMA.newsup</segment>
+  <segment bytes="787490" number="49">491476380838639263.BREFEKI7UW@EJBZZSAVMN.newsup</segment>
+  <segment bytes="787200" number="50">501476380838639277.6JE5FYKLT@EJBZZSAVN1.newsup</segment>
+  <segment bytes="787936" number="51">511476380838639291.2HELVE8ADG@EJBZZSAVNF.newsup</segment>
+  <segment bytes="787219" number="52">521476380838639304.21IQK5GP4Z@EJBZZSAVNS.newsup</segment>
+  <segment bytes="787241" number="53">531476380838639318.D9KD5CM4RF@EJBZZSAVO6.newsup</segment>
+  <segment bytes="787341" number="54">541476380838639333.E94ES0RKAL@EJBZZSAVOL.newsup</segment>
+  <segment bytes="787220" number="55">551476380838639348.2GJC2PM0J7@EJBZZSAVP0.newsup</segment>
+  <segment bytes="787019" number="56">561476380838639362.CXPFTVN509@EJBZZSAVPE.newsup</segment>
+  <segment bytes="787176" number="57">571476380838639377.1B6FO15CLZ@EJBZZSAVPT.newsup</segment>
+  <segment bytes="793316" number="58">581476380838639392.29R42SYIG1@EJBZZSAVQ8.newsup</segment>
+  <segment bytes="793522" number="59">591476380838639407.6KYZ0R6MIR@EJBZZSAVQN.newsup</segment>
+  <segment bytes="787129" number="60">601476380838639423.5FX0IRUP0S@EJBZZSAVR3.newsup</segment>
+  <segment bytes="787469" number="61">611476380838639437.9EECVT5FD6@EJBZZSAVRH.newsup</segment>
+  <segment bytes="787079" number="62">621476380838639451.81W136EMJ0@EJBZZSAVRV.newsup</segment>  
+  <segment bytes="787287" number="63">631476380838639464.RMT7GOO0@EJBZZSAVS8.newsup</segment>
+  <segment bytes="787046" number="64">641476380838639480.7QCX3AO23H@EJBZZSAVSO.newsup</segment>
+  <segment bytes="787123" number="65">651476380838639494.8SCCRE5L6C@EJBZZSAVT2.newsup</segment>
+  <segment bytes="82981" number="66">661476380838639508.7CFU0ZRCAB@EJBZZSAVTG.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [03/16] - &quot;big.buck.bunny.480p.h264.part02.rar&quot; (1/66)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787303" number="1">11476380838639524.ACJWETC5L1@EJBZZSAVTW.newsup</segment>
+  <segment bytes="787267" number="2">21476380838639538.6ZM2F5QK9A@EJBZZSAVUA.newsup</segment>
+  <segment bytes="787105" number="3">31476380838639552.820DJZO5RA@EJBZZSAVUO.newsup</segment>
+  <segment bytes="787300" number="4">41476380838639574.EBXKJKVEO9@EJBZZSAVVA.newsup</segment>
+  <segment bytes="787534" number="5">51476380838639590.EFW44DESIY@EJBZZSAVVQ.newsup</segment>
+  <segment bytes="787356" number="6">61476380838639605.59BTFPZ7W3@EJBZZSAVW5.newsup</segment>
+  <segment bytes="787270" number="7">71476380838639619.3UM6W8ZRCE@EJBZZSAVWJ.newsup</segment>
+  <segment bytes="787309" number="8">81476380838639632.9940FBFQHK@EJBZZSAVWW.newsup</segment>
+  <segment bytes="786757" number="9">91476380838639646.3JSUANM6GJ@EJBZZSAVXA.newsup</segment>
+  <segment bytes="786783" number="10">101476380838639659.CVKYZXBS6Z@EJBZZSAVXN.newsup</segment>
+  <segment bytes="787499" number="11">111476380838639673.5GD2R2K8E3@EJBZZSAVY1.newsup</segment>
+  <segment bytes="787322" number="12">121476380838639686.9JQZQQOE1O@EJBZZSAVYE.newsup</segment>
+  <segment bytes="787559" number="13">131476380838639700.3GJY86HAJ8@EJBZZSAVYS.newsup</segment>
+  <segment bytes="787263" number="14">141476380838639713.E3N9NWQ4KI@EJBZZSAVZ5.newsup</segment>
+  <segment bytes="787489" number="15">151476380838639729.33NZN193U6@EJBZZSAVZL.newsup</segment>
+  <segment bytes="787152" number="16">161476380838639744.CZNRGRODXL@EJBZZSAW00.newsup</segment>
+  <segment bytes="787293" number="17">171476380838639760.6HHF47OSNI@EJBZZSAW0G.newsup</segment>
+  <segment bytes="787522" number="18">181476380838639788.1VPH2BVRBN@EJBZZSAW18.newsup</segment>
+  <segment bytes="787124" number="19">191476380838639804.D6KQZYVVBX@EJBZZSAW1O.newsup</segment>
+  <segment bytes="786875" number="20">201476380838639819.A6UWXMHSI0@EJBZZSAW23.newsup</segment>
+  <segment bytes="787164" number="21">211476380838639835.337CMQUS31@EJBZZSAW2J.newsup</segment>
+  <segment bytes="787294" number="22">221476380838639854.1OWHLSB29R@EJBZZSAW32.newsup</segment>
+  <segment bytes="787293" number="23">231476380838639870.BOLQZJF6JW@EJBZZSAW3I.newsup</segment>
+  <segment bytes="787360" number="24">241476380838639886.86S3GYIS9N@EJBZZSAW3Y.newsup</segment>
+  <segment bytes="787429" number="25">251476380838639903.VJ9LS3T67@EJBZZSAW4F.newsup</segment>
+  <segment bytes="787481" number="26">261476380838639919.3HIBREYKG@EJBZZSAW4V.newsup</segment>
+  <segment bytes="787142" number="27">271476380838639934.DBQRWKUPZ5@EJBZZSAW5A.newsup</segment>
+  <segment bytes="787138" number="28">281476380838639949.AT1IMJ05U1@EJBZZSAW5P.newsup</segment>
+  <segment bytes="787431" number="29">291476380838639965.97CWVRQ4DW@EJBZZSAW65.newsup</segment>
+  <segment bytes="787009" number="30">301476380838639981.1VLAONP9UU@EJBZZSAW6L.newsup</segment>
+  <segment bytes="786782" number="31">311476380838639997.9DO3RZAM2D@EJBZZSAW71.newsup</segment>
+  <segment bytes="786939" number="32">321476380838640012.DN0PN4TUN9@EJBZZSAW7G.newsup</segment>
+  <segment bytes="787339" number="33">331476380838640027.4U7QZL5YP5@EJBZZSAW7V.newsup</segment>
+  <segment bytes="787069" number="34">341476380838640043.UCDLLK6EM@EJBZZSAW8B.newsup</segment>
+  <segment bytes="787255" number="35">351476380838640058.9MBOVS16EW@EJBZZSAW8Q.newsup</segment>
+  <segment bytes="787462" number="36">361476380838640073.BSHY0UL57V@EJBZZSAW95.newsup</segment>
+  <segment bytes="787486" number="37">371476380838640091.5ZX7E5YETQ@EJBZZSAW9N.newsup</segment>
+  <segment bytes="787052" number="38">381476380838640107.33R9KJM2G4@EJBZZSAWA3.newsup</segment>
+  <segment bytes="787376" number="39">391476380838640125.3NO62GR4LO@EJBZZSAWAL.newsup</segment>
+  <segment bytes="787359" number="40">401476380838640141.6KQ8Y0IVY5@EJBZZSAWB1.newsup</segment>
+  <segment bytes="787196" number="41">411476380838640156.7ANLMX87X5@EJBZZSAWBG.newsup</segment>
+  <segment bytes="787569" number="42">421476380838640173.5CKSULY6EB@EJBZZSAWBX.newsup</segment>
+  <segment bytes="787725" number="43">431476380838640188.DW4V8OQLL7@EJBZZSAWCC.newsup</segment>
+  <segment bytes="787243" number="44">441476380838640206.PGYXY518T@EJBZZSAWCU.newsup</segment>
+  <segment bytes="787041" number="45">451476380838640223.6ZB82KF3QE@EJBZZSAWDB.newsup</segment>
+  <segment bytes="787632" number="46">461476380838640239.A0JV2SGVK0@EJBZZSAWDR.newsup</segment>
+  <segment bytes="786933" number="47">471476380838640255.67Y040YR6V@EJBZZSAWE7.newsup</segment>
+  <segment bytes="786812" number="48">481476380838640270.E47T9RNOZB@EJBZZSAWEM.newsup</segment>
+  <segment bytes="787011" number="49">491476380838640285.89N6YBG9XV@EJBZZSAWF1.newsup</segment>
+  <segment bytes="793861" number="50">501476380838640301.8CG0031L54@EJBZZSAWFH.newsup</segment>
+  <segment bytes="787854" number="51">511476380838640316.7LSNTLEMDX@EJBZZSAWFW.newsup</segment>
+  <segment bytes="787492" number="52">521476380838640331.D6W0TSYOT2@EJBZZSAWGB.newsup</segment>
+  <segment bytes="787192" number="53">531476380838640347.1BR0OW0EFC@EJBZZSAWGR.newsup</segment>
+  <segment bytes="787249" number="54">541476380838640363.CSH6M5IBN2@EJBZZSAWH7.newsup</segment>
+  <segment bytes="787357" number="55">551476380838640378.BAVZG06YW7@EJBZZSAWHM.newsup</segment>
+  <segment bytes="787167" number="56">561476380838640395.AY4CW462KO@EJBZZSAWI3.newsup</segment>
+  <segment bytes="787680" number="57">571476380838640413.AXOP83JYVW@EJBZZSAWIL.newsup</segment>
+  <segment bytes="787216" number="58">581476380838640430.A87KPHGIH2@EJBZZSAWJ2.newsup</segment>
+  <segment bytes="787524" number="59">591476380838640446.4SFMSKF02C@EJBZZSAWJI.newsup</segment>
+  <segment bytes="787130" number="60">601476380838640462.80URRCFDTO@EJBZZSAWJY.newsup</segment>
+  <segment bytes="787099" number="61">611476380838640477.7JO42F3UZL@EJBZZSAWKD.newsup</segment>
+  <segment bytes="787412" number="62">621476380838640500.5DQX4Y9CMD@EJBZZSAWL0.newsup</segment>
+  <segment bytes="787164" number="63">631476380838640516.8WJVM3QQRH@EJBZZSAWLG.newsup</segment>
+  <segment bytes="787753" number="64">641476380838640532.842WH1H4IB@EJBZZSAWLW.newsup</segment>
+  <segment bytes="787910" number="65">651476380838640548.5D5MRLY6LA@EJBZZSAWMC.newsup</segment>
+  <segment bytes="82824" number="66">661476380838640564.DY6DNKQJ2M@EJBZZSAWMS.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [04/16] - &quot;big.buck.bunny.480p.h264.part03.rar&quot; (1/66)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787510" number="1">11476380838640584.9VGTTILAOC@EJBZZSAWNC.newsup</segment>
+  <segment bytes="787154" number="2">21476380838640600.4QTA55NTA9@EJBZZSAWNS.newsup</segment>
+  <segment bytes="787106" number="3">31476380838640615.A8BHG3GQCF@EJBZZSAWO7.newsup</segment>
+  <segment bytes="787180" number="4">41476380838640630.8ODZGZ7Z8H@EJBZZSAWOM.newsup</segment>
+  <segment bytes="787134" number="5">51476380838640646.1MWR198XM3@EJBZZSAWP2.newsup</segment>
+  <segment bytes="786760" number="6">61476380838640661.COJTUBW7BC@EJBZZSAWPH.newsup</segment>
+  <segment bytes="787224" number="7">71476380838640678.2237F1G7L5@EJBZZSAWPY.newsup</segment>
+  <segment bytes="787343" number="8">81476380838640694.CHDPBOS59O@EJBZZSAWQE.newsup</segment>
+  <segment bytes="787279" number="9">91476380838640709.22GB5EZHH7@EJBZZSAWQT.newsup</segment>
+  <segment bytes="787149" number="10">101476380838640725.3RXD8CMU1R@EJBZZSAWR9.newsup</segment>
+  <segment bytes="787393" number="11">111476380838640740.7FGQLTSENZ@EJBZZSAWRO.newsup</segment>
+  <segment bytes="787087" number="12">121476380838640755.4H2PRYNRVS@EJBZZSAWS3.newsup</segment>
+  <segment bytes="788020" number="13">131476380838640775.BHQWG2NH5J@EJBZZSAWSN.newsup</segment>
+  <segment bytes="787909" number="14">141476380838640791.3K1G2OV7SP@EJBZZSAWT3.newsup</segment>
+  <segment bytes="787999" number="15">151476380838640808.1DGS86D0RM@EJBZZSAWTK.newsup</segment>
+  <segment bytes="788114" number="16">161476380838640824.2PK0FOR3NT@EJBZZSAWU0.newsup</segment>
+  <segment bytes="787742" number="17">171476380838640839.BDK1O7E7CP@EJBZZSAWUF.newsup</segment>
+  <segment bytes="787527" number="18">181476380838640855.AXV2EWUA27@EJBZZSAWUV.newsup</segment>
+  <segment bytes="787153" number="19">191476380838640870.AV3PH9RIX7@EJBZZSAWVA.newsup</segment>
+  <segment bytes="787497" number="20">201476380838640886.3FLVL3VEAF@EJBZZSAWVQ.newsup</segment>
+  <segment bytes="787407" number="21">211476380838640901.2VSSFDHNGQ@EJBZZSAWW5.newsup</segment>
+  <segment bytes="787260" number="22">221476380838640916.446P3IPRKF@EJBZZSAWWK.newsup</segment>
+  <segment bytes="786968" number="23">231476380838640932.3X52T2ARCE@EJBZZSAWX0.newsup</segment>
+  <segment bytes="787228" number="24">241476380838640949.16D3OHQ975@EJBZZSAWXH.newsup</segment>
+  <segment bytes="786836" number="25">251476380838640965.AS7YKSS0EW@EJBZZSAWXX.newsup</segment>
+  <segment bytes="786956" number="26">261476380838640981.BEYAH9U1T7@EJBZZSAWYD.newsup</segment>
+  <segment bytes="787288" number="27">271476380838640997.E3F3BT9XED@EJBZZSAWYT.newsup</segment>
+  <segment bytes="787109" number="28">281476380838641012.6MZOXE91LB@EJBZZSAWZ8.newsup</segment>
+  <segment bytes="786863" number="29">291476380838641029.4T9I8YT5X9@EJBZZSAWZP.newsup</segment>
+  <segment bytes="787170" number="30">301476380838641045.DT8DQGSDDZ@EJBZZSAX05.newsup</segment>
+  <segment bytes="787384" number="31">311476380838641060.6P22LSG6EC@EJBZZSAX0K.newsup</segment>
+  <segment bytes="786964" number="32">321476380838641075.2NGYPV7LVV@EJBZZSAX0Z.newsup</segment>
+  <segment bytes="786673" number="33">331476380838641092.DYECHQBBW1@EJBZZSAX1G.newsup</segment>
+  <segment bytes="787570" number="34">341476380838641112.33QI2B0YS0@EJBZZSAX20.newsup</segment>
+  <segment bytes="787492" number="35">351476380838641128.6AHVMFXSED@EJBZZSAX2G.newsup</segment>
+  <segment bytes="787575" number="36">361476380838641143.40PWP3UN4X@EJBZZSAX2V.newsup</segment>
+  <segment bytes="787465" number="37">371476380838641366.5H2MM4A1F0@EJBZZSAX92.newsup</segment>
+  <segment bytes="787230" number="38">381476380838641383.5XZGIQP23Q@EJBZZSAX9J.newsup</segment>
+  <segment bytes="787196" number="39">391476380838641399.Q8M1FXHZM@EJBZZSAX9Z.newsup</segment>
+  <segment bytes="787204" number="40">401476380838641414.2S6RNXJ3MB@EJBZZSAXAE.newsup</segment>
+  <segment bytes="787428" number="41">411476380838641430.A8M2OYEJGS@EJBZZSAXAU.newsup</segment>
+  <segment bytes="787338" number="42">421476380838641446.E80VN1RB8E@EJBZZSAXBA.newsup</segment>
+  <segment bytes="787185" number="43">431476380838641461.39443NOSRB@EJBZZSAXBP.newsup</segment>
+  <segment bytes="787378" number="44">441476380838641477.2SAFDK49JF@EJBZZSAXC5.newsup</segment>
+  <segment bytes="793733" number="45">451476380838641492.49OCG4QEJ3@EJBZZSAXCK.newsup</segment>
+  <segment bytes="787418" number="46">461476380838641508.C15YA9RFUD@EJBZZSAXD0.newsup</segment>
+  <segment bytes="787606" number="47">471476380838641524.BWRC5RNCFZ@EJBZZSAXDG.newsup</segment>
+  <segment bytes="787494" number="48">481476380838641539.5DCAQ61VU2@EJBZZSAXDV.newsup</segment>
+  <segment bytes="787655" number="49">491476380838641555.90RW8TFKNL@EJBZZSAXEB.newsup</segment>
+  <segment bytes="787618" number="50">501476380838641570.50PRJ7AP1U@EJBZZSAXEQ.newsup</segment>
+  <segment bytes="787419" number="51">511476380838641586.AUG9O8KVK2@EJBZZSAXF6.newsup</segment>
+  <segment bytes="787340" number="52">521476380838641601.5NBB1JTCIM@EJBZZSAXFL.newsup</segment>
+  <segment bytes="793790" number="53">531476380838641617.2Y7L55DAET@EJBZZSAXG1.newsup</segment>
+  <segment bytes="787414" number="54">541476380838641632.39ZP8PDL3Y@EJBZZSAXGG.newsup</segment>
+  <segment bytes="787711" number="55">551476380838641647.46X5A8DQMS@EJBZZSAXGV.newsup</segment>
+  <segment bytes="787436" number="56">561476380838641664.70VSZ0ANF0@EJBZZSAXHC.newsup</segment>
+  <segment bytes="787606" number="57">571476380838641679.37RVJUDQBG@EJBZZSAXHR.newsup</segment>
+  <segment bytes="787650" number="58">581476380838641696.8V39C4UGSE@EJBZZSAXI8.newsup</segment>        
+  <segment bytes="787584" number="59">591476380838641711.3HKR14RQU1@EJBZZSAXIN.newsup</segment>
+  <segment bytes="787298" number="60">601476380838641726.7F2YF5V88A@EJBZZSAXJ2.newsup</segment>
+  <segment bytes="787400" number="61">611476380838641741.AJUDHX59CG@EJBZZSAXJH.newsup</segment>
+  <segment bytes="787363" number="62">621476380838641756.9JCNKY05LK@EJBZZSAXJW.newsup</segment>
+  <segment bytes="787471" number="63">631476380838641772.AWHLKZXI9H@EJBZZSAXKC.newsup</segment>
+  <segment bytes="787161" number="64">641476380838641787.6HQNINQAWM@EJBZZSAXKR.newsup</segment>
+  <segment bytes="787059" number="65">651476380838641802.173E4X2NUN@EJBZZSAXL6.newsup</segment>
+  <segment bytes="82841" number="66">661476380838641817.USOK88UAZ@EJBZZSAXLL.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [05/16] - &quot;big.buck.bunny.480p.h264.part04.rar&quot; (1/66)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787025" number="1">11476380838641836.DSLA0E22W7@EJBZZSAXM4.newsup</segment>
+  <segment bytes="787331" number="2">21476380838641852.DE44KWVTXL@EJBZZSAXMK.newsup</segment>
+  <segment bytes="786968" number="3">31476380838641868.35EZM287VN@EJBZZSAXN0.newsup</segment>
+  <segment bytes="787368" number="4">41476380838641884.B7VMKJ8D2D@EJBZZSAXNG.newsup</segment>
+  <segment bytes="787310" number="5">51476380838641899.9KDOMPVXR5@EJBZZSAXNV.newsup</segment>
+  <segment bytes="787011" number="6">61476380838641914.6GY9TDLAB1@EJBZZSAXOA.newsup</segment>
+  <segment bytes="787370" number="7">71476380838641930.7QNB27O024@EJBZZSAXOQ.newsup</segment>
+  <segment bytes="787686" number="8">81476380838641945.59X70RTB6N@EJBZZSAXP5.newsup</segment>
+  <segment bytes="786893" number="9">91476380838641964.CQXO52FO27@EJBZZSAXPO.newsup</segment>
+  <segment bytes="787308" number="10">101476380838641980.79STRQMO7C@EJBZZSAXQ4.newsup</segment>
+  <segment bytes="787698" number="11">111476380838641997.4DAJVXQML1@EJBZZSAXQL.newsup</segment>
+  <segment bytes="787934" number="12">121476380838642015.15IDCYKTS9@EJBZZSAXR3.newsup</segment>
+  <segment bytes="787716" number="13">131476380838642030.6J139YMVDC@EJBZZSAXRI.newsup</segment>
+  <segment bytes="787879" number="14">141476380838642045.9BUU19QU54@EJBZZSAXRX.newsup</segment>
+  <segment bytes="787793" number="15">151476380838642063.45SVRMNV92@EJBZZSAXSF.newsup</segment>
+  <segment bytes="787571" number="16">161476380838642080.EB37XQDLWE@EJBZZSAXSW.newsup</segment>
+  <segment bytes="787270" number="17">171476380838642096.BX78QUGLL5@EJBZZSAXTC.newsup</segment>
+  <segment bytes="787182" number="18">181476380838642111.149JMNVH1D@EJBZZSAXTR.newsup</segment>
+  <segment bytes="787156" number="19">191476380838642127.3LVGER9NIG@EJBZZSAXU7.newsup</segment>
+  <segment bytes="787158" number="20">201476380838642142.5EKLAZBFB@EJBZZSAXUM.newsup</segment>
+  <segment bytes="787346" number="21">211476380838642157.2QFN8LKEWU@EJBZZSAXV1.newsup</segment>
+  <segment bytes="787306" number="22">221476380838642173.9KNPW2F6YL@EJBZZSAXVH.newsup</segment>
+  <segment bytes="787811" number="23">231476380838642188.4DQNM06V6L@EJBZZSAXVW.newsup</segment>
+  <segment bytes="787729" number="24">241476380838642203.9AEDJLGFGN@EJBZZSAXWB.newsup</segment>
+  <segment bytes="787117" number="25">251476380838642221.7ABCHXL3UM@EJBZZSAXWT.newsup</segment>
+  <segment bytes="787258" number="26">261476380838642236.E8J7ZJP6WO@EJBZZSAXX8.newsup</segment>
+  <segment bytes="787515" number="27">271476380838642252.7AJLRUWHE6@EJBZZSAXXO.newsup</segment>
+  <segment bytes="787579" number="28">281476380838642267.3SQSD7S09N@EJBZZSAXY3.newsup</segment>
+  <segment bytes="787045" number="29">291476380838642282.9J7SC3L3LR@EJBZZSAXYI.newsup</segment>
+  <segment bytes="786715" number="30">301476380838642298.D4H8L9O1I4@EJBZZSAXYY.newsup</segment>
+  <segment bytes="787447" number="31">311476380838642313.1PKXX1GGUL@EJBZZSAXZD.newsup</segment>
+  <segment bytes="787083" number="32">321476380838642331.4PAH89IM6V@EJBZZSAXZV.newsup</segment>
+  <segment bytes="787260" number="33">331476380838642347.2QOQAKLWGF@EJBZZSAY0B.newsup</segment>
+  <segment bytes="787409" number="34">341476380838642362.BQU581JMG7@EJBZZSAY0Q.newsup</segment>
+  <segment bytes="787359" number="35">351476380838642377.1E9RILT12R@EJBZZSAY15.newsup</segment>
+  <segment bytes="786910" number="36">361476380838642392.ALYLP04OW8@EJBZZSAY1K.newsup</segment>
+  <segment bytes="786748" number="37">371476380838642408.92PZ3JPMDC@EJBZZSAY20.newsup</segment>
+  <segment bytes="787794" number="38">381476380838642424.6R97Z1EVQ4@EJBZZSAY2G.newsup</segment>
+  <segment bytes="787816" number="39">391476380838642440.13FSP7MUVV@EJBZZSAY2W.newsup</segment>
+  <segment bytes="787483" number="40">401476380838642455.DGZRBP6KWR@EJBZZSAY3B.newsup</segment>
+  <segment bytes="787742" number="41">411476380838642470.1ZY8OIY3YU@EJBZZSAY3Q.newsup</segment>
+  <segment bytes="786766" number="42">421476380838642500.6UIHXN0J2Q@EJBZZSAY4K.newsup</segment>
+  <segment bytes="786724" number="43">431476380838642517.BTWC78NBJT@EJBZZSAY51.newsup</segment>
+  <segment bytes="786871" number="44">441476380838642532.B7M780HY8Y@EJBZZSAY5G.newsup</segment>
+  <segment bytes="787210" number="45">451476380838642548.1HPN4FZ79H@EJBZZSAY5W.newsup</segment>
+  <segment bytes="787228" number="46">461476380838642563.AY0Z5HENR6@EJBZZSAY6B.newsup</segment>
+  <segment bytes="786416" number="47">471476380838642578.1IQ7SNOBXG@EJBZZSAY6Q.newsup</segment>
+  <segment bytes="786984" number="48">481476380838642593.EDURPP9CRQ@EJBZZSAY75.newsup</segment>
+  <segment bytes="787603" number="49">491476380838642609.83W18J6C26@EJBZZSAY7L.newsup</segment>
+  <segment bytes="787304" number="50">501476380838642625.AHSJPRGS8V@EJBZZSAY81.newsup</segment>
+  <segment bytes="786942" number="51">511476380838642641.9JUQABIOP3@EJBZZSAY8H.newsup</segment>
+  <segment bytes="786538" number="52">521476380838642656.697AL1RO01@EJBZZSAY8W.newsup</segment>
+  <segment bytes="786689" number="53">531476380838642673.41QTDAZSC1@EJBZZSAY9D.newsup</segment>
+  <segment bytes="787207" number="54">541476380838642688.3N2SHESJ6A@EJBZZSAY9S.newsup</segment>
+  <segment bytes="787303" number="55">551476380838642704.3AC0JSUQTB@EJBZZSAYA8.newsup</segment>
+  <segment bytes="787427" number="56">561476380838642719.ASTJHGKI1H@EJBZZSAYAN.newsup</segment>     
+  <segment bytes="787461" number="57">571476380838642734.8FOSIJA6LP@EJBZZSAYB2.newsup</segment>
+  <segment bytes="787405" number="58">581476380838642761.DF2HHVHI6T@EJBZZSAYBT.newsup</segment>
+  <segment bytes="787515" number="59">591476380838642782.92OYOFUUA1@EJBZZSAYCE.newsup</segment>
+  <segment bytes="787517" number="60">601476380838642798.B57SBL4RF9@EJBZZSAYCU.newsup</segment>
+  <segment bytes="787423" number="61">611476380838642814.ALFR8U8I6V@EJBZZSAYDA.newsup</segment>
+  <segment bytes="787352" number="62">621476380838642829.BCNISL8EP6@EJBZZSAYDP.newsup</segment>
+  <segment bytes="787350" number="63">631476380838642844.7FX9OY7YZQ@EJBZZSAYE4.newsup</segment>
+  <segment bytes="787279" number="64">641476380838642860.2CBE2TN6K2@EJBZZSAYEK.newsup</segment>
+  <segment bytes="787272" number="65">651476380838642875.CP6LE14CL8@EJBZZSAYEZ.newsup</segment>
+  <segment bytes="82764" number="66">661476380838642891.7P4PSI0LGF@EJBZZSAYFF.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [06/16] - &quot;big.buck.bunny.480p.h264.part05.rar&quot; (1/65)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787155" number="1">11476380838642909.C73L31B2KX@EJBZZSAYFX.newsup</segment>
+  <segment bytes="788124" number="2">21476380838642925.5K9RXXDWCF@EJBZZSAYGD.newsup</segment>
+  <segment bytes="787071" number="3">31476380838642941.3BJZ14CI5Y@EJBZZSAYGT.newsup</segment>
+  <segment bytes="787300" number="4">41476380838642956.6IXZFIZN36@EJBZZSAYH8.newsup</segment>
+  <segment bytes="786613" number="5">51476380838642974.87DIL3XHB@EJBZZSAYHQ.newsup</segment>
+  <segment bytes="786481" number="6">61476380838642989.5RHDBZCXJT@EJBZZSAYI5.newsup</segment>
+  <segment bytes="787405" number="7">71476380838643005.22UXWTXJ4Y@EJBZZSAYIL.newsup</segment>
+  <segment bytes="788179" number="8">81476380838643022.C2UW3540NN@EJBZZSAYJ2.newsup</segment>
+  <segment bytes="788342" number="9">91476380838643040.BJ7W1O1CGS@EJBZZSAYJK.newsup</segment>
+  <segment bytes="788360" number="10">101476380838643058.BHGG6GBW2V@EJBZZSAYK2.newsup</segment>
+  <segment bytes="788701" number="11">111476380838643073.245OXMPL77@EJBZZSAYKH.newsup</segment>
+  <segment bytes="788364" number="12">121476380838643088.EE9QPYBIO6@EJBZZSAYKW.newsup</segment>
+  <segment bytes="788545" number="13">131476380838643104.1HGPVOQYAQ@EJBZZSAYLC.newsup</segment>
+  <segment bytes="788426" number="14">141476380838643119.96QO1CHD2R@EJBZZSAYLR.newsup</segment>
+  <segment bytes="788425" number="15">151476380838643134.AP31V319MT@EJBZZSAYM6.newsup</segment>
+  <segment bytes="788378" number="16">161476380838643149.BXSAG620M3@EJBZZSAYML.newsup</segment>
+  <segment bytes="788265" number="17">171476380838643164.C7YBLU53SU@EJBZZSAYN0.newsup</segment>
+  <segment bytes="788537" number="18">181476380838643179.4FA5ALZP4H@EJBZZSAYNF.newsup</segment>
+  <segment bytes="788308" number="19">191476380838643196.EA0DUPY6MY@EJBZZSAYNW.newsup</segment>
+  <segment bytes="788752" number="20">201476380838643211.8STK3O3E3I@EJBZZSAYOB.newsup</segment>
+  <segment bytes="788432" number="21">211476380838643226.9WGM5WU6TV@EJBZZSAYOQ.newsup</segment>
+  <segment bytes="788221" number="22">221476380838643242.15QDKZFC4G@EJBZZSAYP6.newsup</segment>
+  <segment bytes="788512" number="23">231476380838643257.E3CWNANWCU@EJBZZSAYPL.newsup</segment>
+  <segment bytes="788262" number="24">241476380838643272.9TP55Z5N68@EJBZZSAYQ0.newsup</segment>
+  <segment bytes="788617" number="25">251476380838643287.1GYHIOHNAQ@EJBZZSAYQF.newsup</segment>
+  <segment bytes="788541" number="26">261476380838643302.AUDBM1RAAG@EJBZZSAYQU.newsup</segment>
+  <segment bytes="788536" number="27">271476380838643321.1AY5J6169D@EJBZZSAYRD.newsup</segment>
+  <segment bytes="788392" number="28">281476380838643337.6Z757LDU0M@EJBZZSAYRT.newsup</segment>
+  <segment bytes="788478" number="29">291476380838643352.165MLLALOW@EJBZZSAYS8.newsup</segment>
+  <segment bytes="788653" number="30">301476380838643369.8HEVHEUALC@EJBZZSAYSP.newsup</segment>
+  <segment bytes="788299" number="31">311476380838643385.8RYO2JUOAI@EJBZZSAYT5.newsup</segment>
+  <segment bytes="788679" number="32">321476380838643401.300A8NY32I@EJBZZSAYTL.newsup</segment>
+  <segment bytes="788786" number="33">331476380838643416.951GTLTT4A@EJBZZSAYU0.newsup</segment>
+  <segment bytes="788797" number="34">341476380838643432.4YWCCML31G@EJBZZSAYUG.newsup</segment>
+  <segment bytes="788493" number="35">351476380838643447.E3ETHVV06Z@EJBZZSAYUV.newsup</segment>
+  <segment bytes="788259" number="36">361476380838643462.1HU0UJV6EF@EJBZZSAYVA.newsup</segment>
+  <segment bytes="788490" number="37">371476380838643477.9XOIY778J3@EJBZZSAYVP.newsup</segment>
+  <segment bytes="788261" number="38">381476380838643492.M6MO1IBPE@EJBZZSAYW4.newsup</segment>
+  <segment bytes="788646" number="39">391476380838643507.17WX2S7D7Q@EJBZZSAYWJ.newsup</segment>
+  <segment bytes="788433" number="40">401476380838643522.C6519B3ITC@EJBZZSAYWY.newsup</segment>
+  <segment bytes="788508" number="41">411476380838643537.DO8PRBADG@EJBZZSAYXD.newsup</segment>
+  <segment bytes="788371" number="42">421476380838643552.CPN13ODOJF@EJBZZSAYXS.newsup</segment>
+  <segment bytes="788344" number="43">431476380838643569.CGE9523PR1@EJBZZSAYY9.newsup</segment>
+  <segment bytes="788619" number="44">441476380838643587.2KY6UE6ACN@EJBZZSAYYR.newsup</segment>
+  <segment bytes="788593" number="45">451476380838643603.EHA43FLFJN@EJBZZSAYZ7.newsup</segment>
+  <segment bytes="788595" number="46">461476380838643618.9LEMBPGJKG@EJBZZSAYZM.newsup</segment>
+  <segment bytes="788412" number="47">471476380838643633.BL8TJ51G6H@EJBZZSAZ01.newsup</segment>
+  <segment bytes="788597" number="48">481476380838643651.1H4I4H969Q@EJBZZSAZ0J.newsup</segment>
+  <segment bytes="788768" number="49">491476380838643666.A44RD7745N@EJBZZSAZ0Y.newsup</segment>
+  <segment bytes="788665" number="50">501476380838643681.4E0K8FEHO8@EJBZZSAZ1D.newsup</segment>
+  <segment bytes="788444" number="51">511476380838643699.6WG0LCIGTS@EJBZZSAZ1V.newsup</segment>
+  <segment bytes="788489" number="52">521476380838643716.5RWXD5HJ6N@EJBZZSAZ2C.newsup</segment>
+  <segment bytes="788255" number="53">531476380838643732.7HDSA4J2VT@EJBZZSAZ2S.newsup</segment>
+  <segment bytes="787694" number="54">541476380838643747.CCRLIWDRMV@EJBZZSAZ37.newsup</segment>        
+  <segment bytes="787002" number="55">551476380838643763.8T1NH4SPB5@EJBZZSAZ3N.newsup</segment>
+  <segment bytes="787213" number="56">561476380838643778.5O3HT1LFU6@EJBZZSAZ42.newsup</segment>
+  <segment bytes="787778" number="57">571476380838643793.87CTN5BZA8@EJBZZSAZ4H.newsup</segment>
+  <segment bytes="787648" number="58">581476380838643809.BGGSQC8VVM@EJBZZSAZ4X.newsup</segment>
+  <segment bytes="787113" number="59">591476380838643825.DSKL6JNP1N@EJBZZSAZ5D.newsup</segment>
+  <segment bytes="787097" number="60">601476380838643840.8Q6IFRKN45@EJBZZSAZ5S.newsup</segment>
+  <segment bytes="786993" number="61">611476380838643857.8YI5ICDDSC@EJBZZSAZ69.newsup</segment>
+  <segment bytes="787290" number="62">621476380838643873.6W5AJOLAHM@EJBZZSAZ6P.newsup</segment>
+  <segment bytes="787074" number="63">631476380838643888.501ACK7AHU@EJBZZSAZ74.newsup</segment>
+  <segment bytes="787356" number="64">641476380838643904.A7F0DY53OH@EJBZZSAZ7K.newsup</segment>
+  <segment bytes="81134" number="65">651476380838643919.68Y7AFN2RF@EJBZZSAZ7Z.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [07/16] - &quot;big_buck_bunny_480p_h264.mov.sfv&quot; (1/1)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="1140" number="1">11476380838643937.4P1BYNNWOE@EJBZZSAZ8H.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [08/16] - &quot;big.buck.bunny.480p.h264.vol-02.par2&quot; (1/1)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="171254" number="1">11476380838643954.COKHQP1TX6@EJBZZSAZ8Y.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [09/16] - &quot;big.buck.bunny.480p.h264.vol-03.par2&quot; (1/1)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="344442" number="1">11476380838643971.CHIPV1UMSW@EJBZZSAZ9F.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [10/16] - &quot;big.buck.bunny.480p.h264.vol-04.par2&quot; (1/1)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="639483" number="1">11476380838643988.AAO7XFKC29@EJBZZSAZ9W.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [11/16] - &quot;big.buck.bunny.480p.h264.vol-05.par2&quot; (1/2)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787216" number="1">11476380838644006.E9T88XLBVS@EJBZZSAZAE.newsup</segment>
+  <segment bytes="406778" number="2">21476380838644022.BP123SINO1@EJBZZSAZAU.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [12/16] - &quot;big.buck.bunny.480p.h264.vol-06.par2&quot; (1/3)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="786951" number="1">11476380838644041.6I0U77C6VB@EJBZZSAZBD.newsup</segment>
+  <segment bytes="787141" number="2">21476380838644061.NVHFP8K5U@EJBZZSAZBX.newsup</segment>
+  <segment bytes="685089" number="3">31476380838644076.CWOI20K8ZC@EJBZZSAZCC.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [13/16] - &quot;big.buck.bunny.480p.h264.vol-07.par2&quot; (1/6)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="786772" number="1">11476380838644094.67NBRU1LEA@EJBZZSAZCU.newsup</segment>
+  <segment bytes="787014" number="2">21476380838644110.CKBW0YFIDK@EJBZZSAZDA.newsup</segment>
+  <segment bytes="786930" number="3">31476380838644125.O4JHAN5Z8@EJBZZSAZDP.newsup</segment>
+  <segment bytes="787116" number="4">41476380838644143.DFM5RV8J00@EJBZZSAZE7.newsup</segment>
+  <segment bytes="787155" number="5">51476380838644158.E58277ACBN@EJBZZSAZEM.newsup</segment>
+  <segment bytes="412459" number="6">61476380838644174.DEZZXY226E@EJBZZSAZF2.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [14/16] - &quot;big.buck.bunny.480p.h264.vol-08.par2&quot; (1/11)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787054" number="1">11476380838644191.9UWXZZC1FR@EJBZZSAZFJ.newsup</segment>
+  <segment bytes="786951" number="2">21476380838644209.67RBKDJAHE@EJBZZSAZG1.newsup</segment>
+  <segment bytes="787191" number="3">31476380838644224.43G8AIYVFB@EJBZZSAZGG.newsup</segment>
+  <segment bytes="787302" number="4">41476380838644240.89D1G5DNFT@EJBZZSAZGW.newsup</segment>
+  <segment bytes="787153" number="5">51476380838644255.DR8GM6PBYP@EJBZZSAZHB.newsup</segment>
+  <segment bytes="787172" number="6">61476380838644270.3Z57XGBM9Z@EJBZZSAZHQ.newsup</segment>
+  <segment bytes="786850" number="7">71476380838644286.DDDBO03DAS@EJBZZSAZI6.newsup</segment>
+  <segment bytes="787002" number="8">81476380838644301.DWXUFH3G55@EJBZZSAZIL.newsup</segment>
+  <segment bytes="786887" number="9">91476380838644316.280APYN9HR@EJBZZSAZJ0.newsup</segment>
+  <segment bytes="787016" number="10">101476380838644331.AJIRB1ULN1@EJBZZSAZJF.newsup</segment>
+  <segment bytes="610929" number="11">111476380838644347.AAUJTF39ET@EJBZZSAZJV.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [15/16] - &quot;big.buck.bunny.480p.h264.vol-09.par2&quot; (1/22)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787015" number="1">11476380838644364.61MT95SRHF@EJBZZSAZKC.newsup</segment>
+  <segment bytes="786937" number="2">21476380838644379.8VJZEZLALQ@EJBZZSAZKR.newsup</segment>
+  <segment bytes="787236" number="3">31476380838644397.DSAPS795L1@EJBZZSAZL9.newsup</segment>
+  <segment bytes="786901" number="4">41476380838644415.BPZDT4AP5Q@EJBZZSAZLR.newsup</segment>
+  <segment bytes="787083" number="5">51476380838644431.4ZGEDWUSG1@EJBZZSAZM7.newsup</segment>
+  <segment bytes="786911" number="6">61476380838644446.4WLHBUELFK@EJBZZSAZMM.newsup</segment>
+  <segment bytes="786982" number="7">71476380838644462.9F0Z7D9NMP@EJBZZSAZN2.newsup</segment>
+  <segment bytes="787131" number="8">81476380838644477.8GPAI1L5@EJBZZSAZNH.newsup</segment>
+  <segment bytes="786915" number="9">91476380838644492.9MXA4EXOFA@EJBZZSAZNW.newsup</segment>
+  <segment bytes="786928" number="10">101476380838644507.5YAYNY60RF@EJBZZSAZOB.newsup</segment>
+  <segment bytes="786975" number="11">111476380838644523.DVQ343UEJ5@EJBZZSAZOR.newsup</segment>
+  <segment bytes="787000" number="12">121476380838644541.DFRO5SN3CA@EJBZZSAZP9.newsup</segment>
+  <segment bytes="787011" number="13">131476380838644557.1P4ZOQHFWS@EJBZZSAZPP.newsup</segment>
+  <segment bytes="787178" number="14">141476380838644573.8RPOKIP1BJ@EJBZZSAZQ5.newsup</segment>
+  <segment bytes="787116" number="15">151476380838644588.1U059XGBSC@EJBZZSAZQK.newsup</segment>
+  <segment bytes="786912" number="16">161476380838644606.BHM1OX5T4E@EJBZZSAZR2.newsup</segment>
+  <segment bytes="786916" number="17">171476380838644622.30DHKNS9ZT@EJBZZSAZRI.newsup</segment>
+  <segment bytes="787056" number="18">181476380838644637.3XEA9RH8ZL@EJBZZSAZRX.newsup</segment>
+  <segment bytes="787059" number="19">191476380838644653.8PIV9CY973@EJBZZSAZSD.newsup</segment>
+  <segment bytes="787152" number="20">201476380838644668.7Z2QMZ1HCU@EJBZZSAZSS.newsup</segment>
+  <segment bytes="787057" number="21">211476380838644685.6DFL7B84AN@EJBZZSAZT9.newsup</segment>
+  <segment bytes="179179" number="22">221476380838644701.R4MJ4D9YD@EJBZZSAZTP.newsup</segment>
+ </segments>
+</file>
+<file poster="GbAp01F4c_Hwq1xqf-fpkC@jQmUWoGR.veR" date="1476381630" subject="big.buck.bunny.480p.h264 [16/16] - &quot;big.buck.bunny.480p.h264.vol-010.par2&quot; (1/8)">
+ <groups>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+  <group>alt.binaries.hdtv.repost</group>
+ </groups>
+ <segments>
+  <segment bytes="787071" number="1">11476380838644718.9O63O9O42D@EJBZZSAZU6.newsup</segment>
+  <segment bytes="786890" number="2">21476380838644736.4U9SGWCNYY@EJBZZSAZUO.newsup</segment>
+  <segment bytes="787051" number="3">31476380838644752.18P8SOVHAG@EJBZZSAZV4.newsup</segment>
+  <segment bytes="787225" number="4">41476380838644767.B3FCK2CFLW@EJBZZSAZVJ.newsup</segment>
+  <segment bytes="787016" number="5">51476380838644783.47VMA5ORGT@EJBZZSAZVZ.newsup</segment> 
+  <segment bytes="786890" number="6">61476380838644798.9I2PYUEX6M@EJBZZSAZWE.newsup</segment>
+  <segment bytes="787025" number="7">71476380838644814.BRJ793IX95@EJBZZSAZWU.newsup</segment>
+  <segment bytes="500307" number="8">81476380838644830.2UYOTJLLKZ@EJBZZSAZXA.newsup</segment>
+ </segments>
+</file>
+
+</nzb>
