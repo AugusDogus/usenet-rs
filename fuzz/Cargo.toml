@@ -11,6 +11,10 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 usenet = { path = ".." }
 
+# Not part of the crate's workspace.
+[workspace]
+members = ["."]
+
 [[bin]]
 name = "nntp_reply"
 path = "fuzz_targets/nntp_reply.rs"
@@ -18,5 +22,16 @@ test = false
 doc = false
 bench = false
 
-# Not part of the crate's workspace.
-[workspace]
+[[bin]]
+name = "rar"
+path = "fuzz_targets/rar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
