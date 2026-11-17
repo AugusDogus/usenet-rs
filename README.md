@@ -30,6 +30,7 @@ let pool = Pool::new(vec![Server {
     password: "secret".into(),
     connections: 8,
     priority: 0,
+    pipeline: Server::DEFAULT_PIPELINE,
 }]);
 let nzb = Nzb::parse(&std::fs::read("release.nzb")?)?;
 let manifest = resolve(&nzb, &pool).await?;
