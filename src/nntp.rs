@@ -171,18 +171,18 @@ impl Connection {
     /// The decoded-ready body: dot-stuffing removed, lines kept with their CRLF.
     pub async fn body(&mut self, message_id: &str) -> Result<Vec<u8>, NntpError> {
         let reply = self.command(&format!("BODY <{message_id}>"), "BODY").await?;
-        match &reply[..3.min(reply.len())] {
-            "222" => self.multiline().await,
-            "430" | "423" => Err(NntpError::Missing { message_id: message_id.to_string() }),
+        match status(&reply) {
+            b"222" => self.multiline().await,
+            b"430" | b"423" => Err(NntpError::Missing { message_id: message_id.to_string() }),
             _ => Err(self.unexpected("BODY", reply)),
         }
     }
 
     pub async fn stat(&mut self, message_id: &str) -> Result<bool, NntpError> {
         let reply = self.command(&format!("STAT <{message_id}>"), "STAT").await?;
-        match &reply[..3.min(reply.len())] {
-            "223" => Ok(true),
-            "430" | "423" => Ok(false),
+        match status(&reply) {
+            b"223" => Ok(true),
+            b"430" | b"423" => Ok(false),
             _ => Err(self.unexpected("STAT", reply)),
         }
     }
@@ -233,6 +233,13 @@ impl Connection {
             body.extend_from_slice(line.strip_prefix(b".").unwrap_or(&line));
         }
     }
+}
+
+/// The three-digit code a reply starts with, or what there is of it. Byte-wise, since a
+/// misbehaving server can send any bytes.
+fn status(reply: &str) -> &[u8] {
+    let bytes = reply.as_bytes();
+    &bytes[..bytes.len().min(3)]
 }
 
 struct Slot {
@@ -461,7 +468,9 @@ impl Pool {
             let mut to_open = None;
             for (i, slot) in self.0.slots.iter().enumerate() {
                 let mut state = slot.state.lock().unwrap();
-                if tried[i] || state.backoff_until.is_some_and(|t| t > now) {
+                // A server that refused a new connection still serves on those it has open.
+                let backing_off = state.backoff_until.is_some_and(|t| t > now);
+                if tried[i] || (backing_off && state.open == 0) {
                     continue;
                 }
                 // Slots are sorted by priority, so the first usable one names the tier.
@@ -471,7 +480,7 @@ impl Pool {
                 if let Some(conn) = state.idle.pop() {
                     return Some((i, conn));
                 }
-                if to_open.is_none() && state.open < slot.server.connections {
+                if !backing_off && to_open.is_none() && state.open < slot.server.connections {
                     state.open += 1;
                     to_open = Some(i);
                 }
@@ -503,7 +512,10 @@ impl Pool {
         if conn.broken {
             state.open -= 1;
         } else {
-            state.last_error = None;
+            // A refusal stays reported until its backoff ends, even while open connections work.
+            if state.backoff_until.is_none_or(|t| t <= Instant::now()) {
+                state.last_error = None;
+            }
             state.idle.push(conn);
         }
         drop(state);
@@ -551,6 +563,48 @@ mod tests {
         pool.body(id).await.unwrap();
         assert_eq!(backup.served(id), 1);
         assert_eq!(pool.report()[0].refused, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_at_its_connection_limit_keeps_serving_on_the_connections_it_allows() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        server.set_max_sessions(1);
+        let pool = Pool::new(vec![server.config(3, 0)]);
+        let ids: Vec<&str> = posting.ids().collect();
+        let bodies = futures_util::future::join_all(ids.iter().map(|id| pool.body(id))).await;
+        assert!(bodies.iter().all(Result::is_ok), "{bodies:?}");
+        let report = &pool.report()[0];
+        assert!(report.refused >= 1);
+        assert!(report.last_error.as_deref().is_some_and(|e| e.contains("too many connections")), "{report:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reply_that_is_not_ascii_is_an_error_not_a_panic() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            write.write_all(b"200 hi\r\n").await.unwrap();
+            for reply in ["381 more\r\n", "281 ok\r\n", "22\u{20ac}x\r\n", "2\u{20ac}\r\n"] {
+                lines.next_line().await.unwrap();
+                write.write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        let server = Server {
+            host: "127.0.0.1".into(),
+            port,
+            tls: false,
+            username: "u".into(),
+            password: "p".into(),
+            connections: 1,
+            priority: 0,
+        };
+        let mut conn = Connection::open(&server).await.unwrap();
+        assert!(matches!(conn.body("a@x").await, Err(NntpError::Reply { .. })));
     }
 
     #[tokio::test(flavor = "multi_thread")]

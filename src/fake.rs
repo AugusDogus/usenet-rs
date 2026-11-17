@@ -112,6 +112,9 @@ struct Inner {
     /// When the shared link is next free, for the rate limit.
     link_free: Mutex<Instant>,
     logins: AtomicU64,
+    /// Connections open now, and the most allowed at once; 0 is unlimited.
+    sessions: AtomicU64,
+    max_sessions: AtomicU64,
 }
 
 /// An NNTP server on 127.0.0.1 without TLS. It lives until the process exits.
@@ -137,13 +140,22 @@ impl FakeServer {
             down: AtomicBool::new(false),
             link_free: Mutex::new(Instant::now()),
             logins: AtomicU64::new(0),
+            sessions: AtomicU64::new(0),
+            max_sessions: AtomicU64::new(0),
         });
         let shared = inner.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let inner = shared.clone();
                 std::thread::spawn(move || {
-                    let _ = serve(&inner, stream);
+                    let open = inner.sessions.fetch_add(1, Ordering::SeqCst) + 1;
+                    let max = inner.max_sessions.load(Ordering::SeqCst);
+                    let _ = if max > 0 && open > max {
+                        (&stream).write_all(b"502 too many connections\r\n")
+                    } else {
+                        serve(&inner, stream)
+                    };
+                    inner.sessions.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         });
@@ -197,6 +209,12 @@ impl FakeServer {
     /// Limits what all connections send together, in bytes per second. 0 is unlimited.
     pub fn set_rate(&self, bytes_per_second: u64) {
         self.inner.rate.store(bytes_per_second, Ordering::Relaxed);
+    }
+
+    /// Refuses connections beyond `max` open at once, as a provider does past an account's
+    /// connection limit. 0 is unlimited.
+    pub fn set_max_sessions(&self, max: u64) {
+        self.inner.max_sessions.store(max, Ordering::SeqCst);
     }
 
     /// A server that is down refuses new connections and drops open ones at their next command.
