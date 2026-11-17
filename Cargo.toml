@@ -14,10 +14,6 @@ categories = ["network-programming", "parser-implementations", "encoding"]
 # A loopback NNTP server and postings, for tests.
 fake = []
 
-[lints.rust]
-# cargo-fuzz builds with `--cfg fuzzing`, which skips RAR header checksums.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
-
 [dependencies]
 crc32fast = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
@@ -43,6 +39,12 @@ name = "nntp"
 harness = false
 required-features = ["fake"]
 
+[[bench]]
+name = "rar"
+harness = false
+required-features = ["fake"]
+
 [lints.rust]
-# cargo-fuzz builds with --cfg fuzzing, which exposes the NNTP reply parser.
+# cargo-fuzz builds with `--cfg fuzzing`, which exposes the NNTP reply parser and skips RAR
+# header checksums.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
