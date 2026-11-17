@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
   schedule:
     # Fuzz longer once a week.
     - cron: "0 6 * * 1"

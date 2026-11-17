@@ -58,6 +58,12 @@ The crate's own tests run against real NZBs of free films, archives written by `
 seeded mutations of both. `cargo bench` measures each module; `fuzz/` holds cargo-fuzz
 targets for the yEnc, NZB, NNTP reply, RAR and manifest parsers.
 
+## Releasing
+
+Bump `version` in `Cargo.toml`, add the changes to `CHANGELOG.md`, and push a matching tag
+(`git tag v0.3.0 && git push origin v0.3.0`). The release workflow runs CI and publishes to
+crates.io with the `CARGO_REGISTRY_TOKEN` repository secret.
+
 ## License
 
 MIT
