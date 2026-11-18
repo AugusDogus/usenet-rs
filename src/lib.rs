@@ -8,6 +8,8 @@
 //! - [`yenc`]: decoding article bodies, with SIMD on x86_64 and aarch64.
 //! - [`nzb`]: parsing NZB documents into files and segments.
 //! - [`rar`]: reading RAR4 and RAR5 volume headers to find where stored files sit.
+//! - [`par2`]: checking files against PAR2 recovery sets, and rebuilding what is damaged or
+//!   missing from their recovery blocks.
 //! - [`mod@resolve`]: turning an NZB into a [`Manifest`].
 //! - [`manifest`]: the resolved layout, ready to store and read again.
 //!
@@ -20,6 +22,7 @@ pub mod fake;
 pub mod manifest;
 pub mod nntp;
 pub mod nzb;
+pub mod par2;
 pub mod rar;
 pub mod resolve;
 pub mod yenc;
