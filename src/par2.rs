@@ -51,6 +51,8 @@ mod kernel;
 mod packet;
 mod plan;
 mod repair;
+#[cfg(any(test, feature = "fake"))]
+pub(crate) mod write;
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -180,7 +182,7 @@ impl RecoverySet {
         let (slice_size, rest) = body.split_first_chunk::<8>().ok_or(Par2Error::Malformed(Defect::FileList))?;
         let (count, ids) = rest.split_first_chunk::<4>().ok_or(Par2Error::Malformed(Defect::FileList))?;
         let slice_size = u64::from_le_bytes(*slice_size);
-        if slice_size == 0 || slice_size % 4 != 0 || slice_size > MAX_SLICE {
+        if slice_size == 0 || !slice_size.is_multiple_of(4) || slice_size > MAX_SLICE {
             return Err(Par2Error::Malformed(Defect::SliceSize { size: slice_size }));
         }
         let count = u32::from_le_bytes(*count) as usize;
@@ -302,6 +304,14 @@ impl RecoverySet {
         data.len() == slice.length as usize && padded_crc32(data, self.slice_size) == sum.crc32 && {
             padded_md5(data, self.slice_size) == sum.md5
         }
+    }
+
+    /// True when `data` has slice `index`'s length and CRC32. A repair checks only this
+    /// before adding a slice in, which is far cheaper than an MD5, and checks what it rebuilds
+    /// against both: a wrong slice that slipped past its CRC32 shows up there.
+    pub(crate) fn crc_matches(&self, index: u32, data: &[u8]) -> bool {
+        let (Some(slice), Some(sum)) = (self.slice(index), self.checksum(index)) else { return false };
+        data.len() == slice.length as usize && padded_crc32(data, self.slice_size) == sum.crc32
     }
 
     /// Checks every slice and returns the indices of those that are damaged or missing.

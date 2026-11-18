@@ -439,3 +439,27 @@ fn send(inner: &Inner, out: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()>
     }
     Ok(())
 }
+
+/// PAR2 files protecting `files`, named and laid out as par2cmdline writes them: the index
+/// `{base}.par2`, then volumes `{base}.vol{first}+{count}.par2` of 1, 2, 4, ... recovery
+/// blocks, `blocks` in all, each volume repeating the index's packets. Post them with the
+/// files to test repair.
+///
+/// # Panics
+///
+/// When `slice_size` is not a positive multiple of 4; this is a test fixture.
+pub fn par2(base: &str, files: &[(&str, &[u8])], slice_size: usize, blocks: u16) -> Vec<(String, Vec<u8>)> {
+    assert!(slice_size > 0 && slice_size.is_multiple_of(4), "PAR2 slices are a positive multiple of 4 bytes");
+    let written = crate::par2::write::write(files, slice_size, 0..blocks);
+    let mut out = vec![(format!("{base}.par2"), written.index.clone())];
+    let (mut first, mut count) = (0usize, 1usize);
+    while first < written.recovery.len() {
+        let end = (first + count).min(written.recovery.len());
+        let mut volume = written.recovery[first..end].concat();
+        volume.extend_from_slice(&written.index);
+        out.push((format!("{base}.vol{first}+{}.par2", end - first), volume));
+        first = end;
+        count *= 2;
+    }
+    out
+}

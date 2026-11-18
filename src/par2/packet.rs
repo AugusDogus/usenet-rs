@@ -34,15 +34,16 @@ impl Header {
         let (set, rest) = rest.split_first_chunk::<16>()?;
         let kind = rest.first_chunk::<16>()?;
         let length = u64::from_le_bytes(*length);
-        if magic != MAGIC || length < HEADER as u64 || length % 4 != 0 {
+        if magic != MAGIC || length < HEADER as u64 || !length.is_multiple_of(4) {
             return None;
         }
         Some(Self { length, hash: *hash, set: *set, kind: *kind })
     }
 
     /// True when `packet`, the whole packet this header starts, hashes as the header says.
+    /// Under `cfg(fuzzing)` any packet is intact, so mutations reach the parsers behind it.
     pub(crate) fn intact(&self, packet: &[u8]) -> bool {
-        packet.get(32..).is_some_and(|hashed| Md5::digest(hashed).as_slice() == self.hash)
+        packet.get(32..).is_some_and(|hashed| cfg!(fuzzing) || Md5::digest(hashed).as_slice() == self.hash)
     }
 }
 
@@ -87,21 +88,9 @@ impl<'a, F: Fn(&[u8; 16]) -> bool> Iterator for Packets<'a, F> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
+    use super::super::write::packet;
     use super::*;
-
-    /// A packet of `kind` in `set` holding `body`, padded to a multiple of 4.
-    pub(crate) fn packet(set: [u8; 16], kind: &[u8; 16], body: &[u8]) -> Vec<u8> {
-        let mut rest = set.to_vec();
-        rest.extend_from_slice(kind);
-        rest.extend_from_slice(body);
-        rest.resize(rest.len().div_ceil(4) * 4, 0);
-        let mut p = MAGIC.to_vec();
-        p.extend_from_slice(&(rest.len() as u64 + 32).to_le_bytes());
-        p.extend_from_slice(&Md5::digest(&rest));
-        p.extend_from_slice(&rest);
-        p
-    }
 
     #[test]
     fn finds_intact_packets_among_garbage_and_damage() {

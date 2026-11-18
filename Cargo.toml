@@ -55,6 +55,11 @@ harness = false
 name = "nzb"
 harness = false
 
+[[bench]]
+name = "par2"
+harness = false
+required-features = ["fake"]
+
 [lints.rust]
 # cargo-fuzz builds with `--cfg fuzzing`, which exposes the NNTP reply parser and skips RAR
 # header checksums.

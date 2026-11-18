@@ -49,3 +49,10 @@ path = "fuzz_targets/nzb.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "par2"
+path = "fuzz_targets/par2.rs"
+test = false
+doc = false
+bench = false

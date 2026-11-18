@@ -124,8 +124,10 @@ impl Repair {
         self.rows.len()
     }
 
-    /// Adds slice `index`, as read from the file, into every block. A slice that does not
-    /// match its checksum, a short one included, is named damaged instead.
+    /// Adds slice `index`, as read from the file, into every block. A slice whose length or
+    /// CRC32 does not match is named damaged instead. Only the CRC32 is checked here, since
+    /// an MD5 would cost more than the rest of the repair; [`finish`](Self::finish) checks
+    /// the rebuilt slices against both, which catches a wrong slice the CRC32 let through.
     ///
     /// Fails, changing nothing, when the slice is not waiting, or when it is damaged and the
     /// blocks cannot rebuild it along with the others.
@@ -133,7 +135,7 @@ impl Repair {
         if !self.is_waiting(index) {
             return Err(self.not_waiting(index));
         }
-        if !self.set.check(index, data) {
+        if !self.set.crc_matches(index, data) {
             self.lose(index)?;
             return Ok(Feed::Damaged);
         }

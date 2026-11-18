@@ -3,11 +3,8 @@
 
 use std::io;
 
-use md5::{Digest, Md5};
-
-use super::kernel::Kernel;
-use super::packet::tests::packet;
-use super::packet::{FILE_DESC, IFSC, MAIN, RECOVERY};
+use super::packet::{FILE_DESC, IFSC, MAIN};
+use super::write::packet;
 use super::*;
 
 fn pseudo_random(len: usize, mut state: u64) -> Vec<u8> {
@@ -31,57 +28,14 @@ struct Written {
 }
 
 fn write(files: &[(&str, Vec<u8>)], slice_size: usize, exponents: std::ops::Range<u16>) -> Written {
-    let md5 = |b: &[u8]| -> [u8; 16] { Md5::digest(b).into() };
-    let mut described: Vec<([u8; 16], &str, &[u8])> = files
-        .iter()
-        .map(|(name, data)| {
-            let mut key = md5(&data[..data.len().min(16384)]).to_vec();
-            key.extend_from_slice(&(data.len() as u64).to_le_bytes());
-            key.extend_from_slice(name.as_bytes());
-            (md5(&key), *name, data.as_slice())
-        })
-        .collect();
-    described.sort_by_key(|(id, _, _)| *id);
-    let mut main = (slice_size as u64).to_le_bytes().to_vec();
-    main.extend_from_slice(&(files.len() as u32).to_le_bytes());
-    for (id, _, _) in &described {
-        main.extend_from_slice(id);
-    }
-    let set = md5(&main);
-    let mut index = packet(set, MAIN, &main);
-    let mut slices = Vec::new();
-    for (id, name, data) in &described {
-        let mut desc = id.to_vec();
-        desc.extend_from_slice(&md5(data));
-        desc.extend_from_slice(&md5(&data[..data.len().min(16384)]));
-        desc.extend_from_slice(&(data.len() as u64).to_le_bytes());
-        desc.extend_from_slice(name.as_bytes());
-        index.extend(packet(set, FILE_DESC, &desc));
-        let mut ifsc = id.to_vec();
-        for chunk in data.chunks(slice_size) {
-            let mut padded = chunk.to_vec();
-            padded.resize(slice_size, 0);
-            ifsc.extend_from_slice(&md5(&padded));
-            ifsc.extend_from_slice(&crc32fast::hash(&padded).to_le_bytes());
-            slices.push(chunk);
-        }
-        index.extend(packet(set, IFSC, &ifsc));
-    }
-    let mut volume = Vec::new();
-    for e in exponents {
-        let mut block = vec![0u8; slice_size];
-        for (i, s) in slices.iter().enumerate() {
-            Kernel::Scalar.mul_add(&mut block, s, gf::coefficient(i, e).unwrap());
-        }
-        let mut body = u32::from(e).to_le_bytes().to_vec();
-        body.extend_from_slice(&block);
-        volume.extend(packet(set, RECOVERY, &body));
-    }
+    let given: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    let written = super::write::write(&given, slice_size, exponents);
     // Volumes repeat the index's packets, as par2cmdline writes them.
-    volume.extend_from_slice(&index);
-    let set = RecoverySet::parse(&index).unwrap();
-    let files = described.iter().map(|(_, n, d)| (n.to_string(), d.to_vec())).collect();
-    Written { index, volume, files, set }
+    let mut volume = written.recovery.concat();
+    volume.extend_from_slice(&written.index);
+    let set = RecoverySet::parse(&written.index).unwrap();
+    let files = written.order.iter().map(|&i| (files[i].0.to_string(), files[i].1.clone())).collect();
+    Written { index: written.index, volume, files, set }
 }
 
 fn sample() -> Written {
@@ -339,4 +293,28 @@ fn mutated_sets_parse_and_repair_without_panics() {
             }
         }
     }
+}
+
+#[test]
+fn a_wrong_block_is_caught_before_anything_is_written() {
+    let w = sample();
+    let mut blocks = blocks(&w);
+    blocks[0].data[0] ^= 1;
+    let result = w.set.repair(&[4], blocks, reader(&w.files), |_, _| panic!("nothing is written"));
+    assert_eq!(result, Err(RepairError::Unverified { index: 4 }));
+}
+
+#[test]
+fn fake_par2_files_are_named_as_par2cmdline_names_them() {
+    let data = pseudo_random(5000, 4);
+    let files = crate::fake::par2("movie", &[("movie.mkv", &data)], 512, 6);
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["movie.par2", "movie.vol0+1.par2", "movie.vol1+2.par2", "movie.vol3+3.par2"]);
+    let set = RecoverySet::parse(&files[0].1).unwrap();
+    let mut scanner = Scanner::new(&set);
+    for (_, v) in &files[1..] {
+        assert_eq!(RecoverySet::parse(v).unwrap(), set);
+        scanner.push(v);
+    }
+    assert_eq!(scanner.blocks().len(), 6);
 }
