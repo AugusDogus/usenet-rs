@@ -28,6 +28,8 @@ Added:
   and orders the volumes to fetch for enough blocks. `RecoverySet::file_starting` matches a
   posted file to the set by its size and first article, since posters rename files.
   `examples/repair.rs` repairs a real release this way.
+- A yEnc length, CRC or truncation error no longer ends with "so fetch another copy": the
+  caller knows whether another copy exists, and `ArticleError` says what follows.
 - `Manifest::par2` lists the posted files whose names hide that they are PAR2 files, as the
   resolver recognized them by their first article, with each one's recovery set, and
   `Par2Files::find_resolved` finds their sets beside those found by name. A manifest without

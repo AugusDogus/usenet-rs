@@ -92,6 +92,9 @@ mod tests {
                 matches!(&damaged, Err(ArticleError::Yenc { error: YencError::Truncated { .. }, .. })),
                 "{damaged:?}"
             );
+            // One conclusion: the server's copy is bad, not "fetch another copy" and then that.
+            let said = damaged.unwrap_err().to_string();
+            assert!(!said.contains("fetch another copy") && said.contains("another posting"), "{said}");
         }
         assert_eq!(server.served(&ids[1]), 2);
     }

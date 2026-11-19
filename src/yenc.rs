@@ -150,21 +150,17 @@ impl fmt::Display for YencError {
                 "the yEnc part of {name:?} begins at byte {begin}, past the end of the {file_size}-byte file, \
                  so it cannot be placed"
             ),
-            Self::Length { name, expected, actual } => write!(
-                f,
-                "yEnc data for {name:?} decoded to {actual} bytes, but its header declares {expected}; \
-                 the article is damaged, so fetch another copy"
-            ),
+            Self::Length { name, expected, actual } => {
+                write!(f, "yEnc data for {name:?} decoded to {actual} bytes, but its header declares {expected}")
+            }
             Self::Crc { name, begin, expected, actual } => write!(
                 f,
                 "yEnc data for {name:?} at byte {begin} has CRC32 {actual:08x}, but its trailer declares \
-                 {expected:08x}; the article is corrupt, so fetch another copy"
+                 {expected:08x}"
             ),
-            Self::Truncated { name, begin, decoded } => write!(
-                f,
-                "yEnc data for {name:?} at byte {begin} ends after {decoded} bytes without its =yend line; \
-                 the article is cut short, so fetch another copy"
-            ),
+            Self::Truncated { name, begin, decoded } => {
+                write!(f, "yEnc data for {name:?} at byte {begin} ends after {decoded} bytes without its =yend line")
+            }
         }
     }
 }
