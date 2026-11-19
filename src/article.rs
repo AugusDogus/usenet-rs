@@ -69,3 +69,30 @@ pub async fn exists(pool: &Pool, ids: &[String]) -> Result<bool, NntpError> {
     }
     Ok(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake::{FakeServer, Posting};
+    use crate::yenc::YencError;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_damaged_article_is_sent_cut_short_every_time_and_does_not_decode() {
+        let data: Vec<u8> = (0..40_000u32).map(|i| (i * 7) as u8).collect();
+        let posting = Posting::new("set", &[("a.bin", &data)], 16 * 1024);
+        let server = FakeServer::start();
+        server.add(&posting);
+        let ids = &posting.files[0].1;
+        server.damage(&ids[1]);
+        let pool = Pool::new(vec![server.config(2, 0)]);
+        assert_eq!(fetch(&pool, &ids[..1]).await.unwrap().data, data[..16 * 1024]);
+        for _ in 0..2 {
+            let damaged = fetch(&pool, &ids[1..2]).await;
+            assert!(
+                matches!(&damaged, Err(ArticleError::Yenc { error: YencError::Truncated { .. }, .. })),
+                "{damaged:?}"
+            );
+        }
+        assert_eq!(server.served(&ids[1]), 2);
+    }
+}

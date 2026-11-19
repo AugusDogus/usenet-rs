@@ -271,6 +271,17 @@ impl FakeServer {
         self.inner.state.lock().delays.insert(message_id.to_string(), extra);
     }
 
+    /// Serves the article cut short before its `=yend` trailer, the same copy every time, as a
+    /// post that was truncated on its way to the servers is. It no longer decodes.
+    pub fn damage(&self, message_id: &str) {
+        let mut state = self.inner.state.lock();
+        if let Some(body) = state.articles.get(message_id) {
+            let trailer = body.windows(7).rposition(|w| w == b"\r\n=yend").map_or(body.len(), |at| at + 2);
+            let cut = Arc::new(body[..trailer].to_vec());
+            state.articles.insert(message_id.to_string(), cut);
+        }
+    }
+
     /// Closes the connection halfway through the article's body, every time it is asked for.
     pub fn cut(&self, message_id: &str) {
         self.inner.state.lock().cuts.insert(message_id.to_string());

@@ -26,7 +26,8 @@ Added:
   and orders the volumes to fetch for enough blocks. `RecoverySet::file_starting` matches a
   posted file to the set by its size and first article, since posters rename files.
   `examples/repair.rs` repairs a real release this way.
-- The `fake` server can cap each connection's speed (`FakeServer::set_connection_rate`), and
+- The `fake` server can cap each connection's speed (`FakeServer::set_connection_rate`), serve
+  an article cut short before its trailer (`FakeServer::damage`), and
   `fake::par2` writes PAR2 files to post with a release.
 - Criterion benches for PAR2 checking, scanning and repair, and a cargo-fuzz target for it.
 
