@@ -845,11 +845,12 @@ mod tests {
             order.lock().push(k);
         };
         let seek = pool.with_priority(Priority::Urgent);
+        // The others start once the first is on the connection, which they then wait for.
         tokio::join!(
             fetch(pool.clone(), 0, 0),
-            fetch(pool.clone(), 1, 10),
-            fetch(pool.clone(), 2, 10),
-            fetch(seek, 3, 30)
+            fetch(pool.clone(), 1, 50),
+            fetch(pool.clone(), 2, 50),
+            fetch(seek, 3, 70)
         );
         let order = order.into_inner();
         assert_eq!((order[0], order[1]), (0, 3), "{order:?}");
