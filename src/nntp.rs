@@ -835,7 +835,8 @@ mod tests {
         let server = FakeServer::start();
         let posting = posting();
         server.add(&posting);
-        server.set_latency(Duration::from_millis(200));
+        // Rounds long enough that connection setup on a slow runner cannot blur them.
+        server.set_latency(Duration::from_millis(400));
         let pool = Pool::new(vec![server.config(8, 0)]);
         assert_eq!(pool.priority(), Priority::Background);
         let limit = pool.stats().background_limit as usize;
@@ -852,9 +853,10 @@ mod tests {
         };
         let (bodies, urgent) = tokio::join!(background, urgent);
         assert!(bodies.iter().all(Result::is_ok));
-        // Four rounds for the background requests, at most two for the urgent one.
-        assert!(started.elapsed() >= Duration::from_millis(780), "{:?}", started.elapsed());
-        assert!(urgent < Duration::from_millis(500), "{urgent:?}");
+        // Four rounds for the background requests, at most two for the urgent one, which
+        // leaves it well short of the three it would wait behind them.
+        assert!(started.elapsed() >= Duration::from_millis(1560), "{:?}", started.elapsed());
+        assert!(urgent < Duration::from_millis(1100), "{urgent:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
