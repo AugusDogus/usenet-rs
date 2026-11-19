@@ -12,8 +12,8 @@
 //!    [`RecoverySet::parse`].
 //! 2. [`RecoverySet::file_named`] and [`RecoverySet::slices_in`] say which slices an article
 //!    that no server has falls in.
-//! 3. [`Par2Files::choose`] picks volumes holding enough recovery blocks. Fetch them and push
-//!    their bytes through a [`Scanner`].
+//! 3. [`Par2Files::choose`] orders the volumes to fetch for enough recovery blocks. Push
+//!    their bytes through a [`Scanner`] until it holds enough.
 //! 4. Feed every other slice to a [`Repair`] as it lands, then [`finish`](Repair::finish) it
 //!    once [`Repair::waiting`] is empty. Or, with the files on disk, [`RecoverySet::repair`]
 //!    does all of it through a reader and a writer.
@@ -257,7 +257,9 @@ impl RecoverySet {
     }
 
     /// The position of the file of `size` bytes whose first 16 KiB (or whole self, if
-    /// smaller) are `head`, for a file posted under an obfuscated name.
+    /// smaller) are `head`. Posters often rename files, or obfuscate their names, so this is
+    /// how to match a posted file to the set: by the file size and the bytes of its first
+    /// article.
     pub fn file_starting(&self, size: u64, head: &[u8]) -> Option<usize> {
         let head = &head[..head.len().min(16 * 1024)];
         if (head.len() as u64) < size.min(16 * 1024) {

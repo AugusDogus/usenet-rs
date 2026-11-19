@@ -22,7 +22,10 @@ Added:
   blocks from volumes as their articles arrive; `Repair` rebuilds damaged slices by
   Reed-Solomon over GF(2^16), with SSSE3, AVX2 or NEON, as every other slice of the set is
   fed to it; `RecoverySet::repair` does the same through a reader and a writer;
-  `Par2Files` finds an NZB's PAR2 files and picks the volumes that hold enough blocks.
+  `Par2Files` finds an NZB's PAR2 files, named `name.vol7+8.par2` or `name.vol-07.par2`,
+  and orders the volumes to fetch for enough blocks. `RecoverySet::file_starting` matches a
+  posted file to the set by its size and first article, since posters rename files.
+  `examples/repair.rs` repairs a real release this way.
 - The `fake` server can cap each connection's speed (`FakeServer::set_connection_rate`), and
   `fake::par2` writes PAR2 files to post with a release.
 - Criterion benches for PAR2 checking, scanning and repair, and a cargo-fuzz target for it.

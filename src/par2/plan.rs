@@ -2,31 +2,49 @@
 
 use crate::nzb::Nzb;
 
+/// Bytes a recovery packet adds to its slice: the header and the exponent.
+const PACKET: u64 = 64 + 4;
+
 /// A PAR2 volume posted in an NZB.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Volume {
     /// The file's position in [`Nzb::files`].
     pub file: usize,
-    /// The first recovery block's exponent, from the name.
-    pub first: u32,
-    /// How many recovery blocks the volume holds, from the name.
-    pub blocks: u32,
+    /// How many recovery blocks the volume holds, when its name says: `name.vol7+8.par2`
+    /// holds 8. Posters that name volumes `name.vol-07.par2` do not say.
+    pub blocks: Option<u32>,
+    /// The file's posted size, the sum of its segments' sizes as the NZB gives them.
+    pub bytes: u64,
+}
+
+impl Volume {
+    /// The blocks the volume holds, by its name, or else estimated from its posted size:
+    /// yEnc adds 1 to 3% to what it encodes, and a volume repeats the index's packets, so
+    /// this is an estimate on the low side.
+    pub fn estimated_blocks(&self, slice_size: u64) -> u64 {
+        match self.blocks {
+            Some(n) => u64::from(n),
+            None => (self.bytes * 100 / 103) / (slice_size + PACKET),
+        }
+    }
 }
 
 /// The PAR2 files of one recovery set in an NZB, recognized by name: `name.par2` for the
-/// index and `name.volFIRST+COUNT.par2` for the volumes, as par2cmdline, MultiPar and
-/// posters name them.
+/// index, and `name.vol7+8.par2` or `name.vol-07.par2` for volumes, as par2cmdline, MultiPar
+/// and posters name them.
 ///
 /// A release posted under obfuscated names has no `.par2` names to find; recognize its PAR2
-/// files by content instead, by [`RecoverySet::parse`](super::RecoverySet::parse) on their
+/// files by content instead, with [`RecoverySet::parse`](super::RecoverySet::parse) on their
 /// first article.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Par2Files {
-    /// The name the files share, before `.par2` or `.volFIRST+COUNT.par2`.
+    /// The name the files share, before `.par2` or `.vol...par2`.
     pub base: String,
-    /// The index's position in [`Nzb::files`], if it was posted.
-    pub index: Option<usize>,
-    /// The volumes, by first exponent.
+    /// The file to read the set's description from, a position in [`Nzb::files`]: the
+    /// index if it was posted, or else the smallest volume, since every volume carries the
+    /// description too.
+    pub index: usize,
+    /// The volumes, in NZB order.
     pub volumes: Vec<Volume>,
 }
 
@@ -34,80 +52,86 @@ impl Par2Files {
     /// The PAR2 sets an NZB posts, largest first, which is usually the release's own set
     /// rather than a sample's.
     pub fn find(nzb: &Nzb) -> Vec<Par2Files> {
-        let mut sets: Vec<Par2Files> = Vec::new();
+        let mut sets: Vec<(String, Option<usize>, Vec<Volume>)> = Vec::new();
         for (i, file) in nzb.files.iter().enumerate() {
             let Some((base, volume)) = parse_name(&file.filename) else { continue };
-            let k = match sets.iter().position(|s| s.base.eq_ignore_ascii_case(base)) {
+            let k = match sets.iter().position(|s| s.0.eq_ignore_ascii_case(base)) {
                 Some(k) => k,
                 None => {
-                    sets.push(Par2Files { base: base.to_string(), index: None, volumes: Vec::new() });
+                    sets.push((base.to_string(), None, Vec::new()));
                     sets.len() - 1
                 }
             };
-            let set = &mut sets[k];
+            let bytes = file.segments.iter().map(|s| s.bytes).sum();
             match volume {
-                Some((first, blocks)) => set.volumes.push(Volume { file: i, first, blocks }),
+                Some(blocks) => sets[k].2.push(Volume { file: i, blocks, bytes }),
                 None => {
-                    set.index.get_or_insert(i);
+                    sets[k].1.get_or_insert(i);
                 }
             }
         }
-        for set in &mut sets {
-            set.volumes.sort_by_key(|v| (v.first, v.file));
-        }
-        sets.sort_by_key(|s| std::cmp::Reverse(s.blocks()));
-        sets
+        let mut found: Vec<Par2Files> = sets
+            .into_iter()
+            .filter_map(|(base, index, volumes)| {
+                let index = index.or_else(|| volumes.iter().min_by_key(|v| v.bytes).map(|v| v.file))?;
+                Some(Par2Files { base, index, volumes })
+            })
+            .collect();
+        found.sort_by_key(|s| std::cmp::Reverse(s.volumes.iter().map(|v| v.bytes).sum::<u64>()));
+        found
     }
 
-    /// Recovery blocks across all volumes.
-    pub fn blocks(&self) -> u64 {
-        self.volumes.iter().map(|v| u64::from(v.blocks)).sum()
+    /// Recovery blocks across all volumes, by name or estimate; see
+    /// [`Volume::estimated_blocks`].
+    pub fn blocks(&self, slice_size: u64) -> u64 {
+        self.volumes.iter().map(|v| v.estimated_blocks(slice_size)).sum()
     }
 
-    /// Volumes holding at least `needed` blocks between them, with few blocks to spare: the
-    /// smallest volume that holds them all if there is one, else the largest volumes and then
-    /// the smallest that covers the rest. Their positions in [`Nzb::files`]; None when all
-    /// the volumes together hold too few.
-    pub fn choose(&self, needed: u32) -> Option<Vec<usize>> {
-        if self.blocks() < u64::from(needed) {
-            return None;
-        }
-        let mut left: Vec<&Volume> = self.volumes.iter().filter(|v| v.blocks > 0).collect();
-        left.sort_by_key(|v| v.blocks);
-        let mut chosen = Vec::new();
+    /// The volumes to fetch for `needed` blocks, as positions in [`Nzb::files`], in the order
+    /// to fetch them. The first ones should hold the blocks with few to spare: the smallest
+    /// volume that holds them all, or else the largest and then the smallest that covers the
+    /// rest. Fetch them in order through a [`Scanner`](super::Scanner) and stop once it holds
+    /// enough. The rest follow, smallest first, in case a volume holds fewer blocks than
+    /// estimated or is damaged.
+    pub fn choose(&self, needed: u32, slice_size: u64) -> Vec<usize> {
+        let mut left: Vec<(u64, usize)> =
+            self.volumes.iter().map(|v| (v.estimated_blocks(slice_size), v.file)).collect();
+        left.sort();
+        let mut order = Vec::new();
         let mut needed = u64::from(needed);
-        while needed > 0 {
-            let k = match left.iter().position(|v| u64::from(v.blocks) >= needed) {
-                Some(k) => k,
-                None => left.len().checked_sub(1)?,
-            };
-            let v = left.remove(k);
-            needed = needed.saturating_sub(u64::from(v.blocks));
-            chosen.push(v.file);
+        while needed > 0 && !left.is_empty() {
+            let k = left.iter().position(|&(blocks, _)| blocks >= needed).unwrap_or(left.len() - 1);
+            let (blocks, file) = left.remove(k);
+            needed = needed.saturating_sub(blocks);
+            order.push(file);
         }
-        Some(chosen)
+        order.extend(left.into_iter().map(|(_, file)| file));
+        order
     }
 }
 
-/// `name.par2` as `(name, None)`, and `name.volA+B.par2` as `(name, Some((A, B)))`.
-fn parse_name(filename: &str) -> Option<(&str, Option<(u32, u32)>)> {
+/// `name.par2` as `(name, None)`; `name.volA+B.par2` as `(name, Some(Some(B)))`; and
+/// `name.vol-A.par2` or `name.volA.par2` as `(name, Some(None))`.
+fn parse_name(filename: &str) -> Option<(&str, Option<Option<u32>>)> {
     let cut = filename.len().checked_sub(5)?;
     if !filename.is_char_boundary(cut) || !filename[cut..].eq_ignore_ascii_case(".par2") {
         return None;
     }
     let stem = &filename[..cut];
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let volume = stem.rfind('.').and_then(|dot| {
         let tag = &stem[dot + 1..];
         let numbers = tag.get(..3).filter(|v| v.eq_ignore_ascii_case("vol")).map(|_| &tag[3..])?;
-        let (first, count) = numbers.split_once(['+', '-'])?;
-        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-        if !digits(first) || !digits(count) {
-            return None;
-        }
-        Some((dot, first.parse().ok()?, count.parse().ok()?))
+        let count = match numbers.split_once('+') {
+            Some((first, count)) if digits(first) && digits(count) => Some(count.parse().ok()?),
+            Some(_) => return None,
+            None if digits(numbers.strip_prefix('-').unwrap_or(numbers)) => None,
+            None => return None,
+        };
+        Some((dot, count))
     });
     match volume {
-        Some((dot, first, count)) => Some((&stem[..dot], Some((first, count)))),
+        Some((dot, count)) => Some((&stem[..dot], Some(count))),
         None => Some((stem, None)),
     }
 }
@@ -117,29 +141,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_are_read_as_par2cmdline_writes_them() {
+    fn names_are_read_as_posters_write_them() {
         assert_eq!(parse_name("movie.par2"), Some(("movie", None)));
-        assert_eq!(parse_name("Movie.2024.vol07+08.PAR2"), Some(("Movie.2024", Some((7, 8)))));
-        assert_eq!(parse_name("movie.vol000-001.par2"), Some(("movie", Some((0, 1)))));
+        assert_eq!(parse_name("Movie.2024.vol07+08.PAR2"), Some(("Movie.2024", Some(Some(8)))));
+        assert_eq!(parse_name("movie.vol-010.par2"), Some(("movie", Some(None))));
+        assert_eq!(parse_name("movie.vol3.par2"), Some(("movie", Some(None))));
         assert_eq!(parse_name("movie.volx+1.par2"), Some(("movie.volx+1", None)));
+        assert_eq!(parse_name("movie.vol-.par2"), Some(("movie.vol-", None)));
         assert_eq!(parse_name("movie.rar"), None);
         assert_eq!(parse_name("ü.par2"), Some(("ü", None)));
         assert_eq!(parse_name("par2"), None);
     }
 
     fn files(volumes: &[u32]) -> Par2Files {
-        let volumes = volumes.iter().enumerate().map(|(i, &blocks)| Volume { file: i, first: 0, blocks }).collect();
-        Par2Files { base: "x".into(), index: None, volumes }
+        let volumes =
+            volumes.iter().enumerate().map(|(i, &blocks)| Volume { file: i, blocks: Some(blocks), bytes: 0 }).collect();
+        Par2Files { base: "x".into(), index: 0, volumes }
     }
 
     #[test]
-    fn choose_takes_few_spare_blocks() {
+    fn choose_takes_few_spare_blocks_first() {
         let set = files(&[1, 2, 4, 8, 16]);
-        assert_eq!(set.choose(1), Some(vec![0]));
-        assert_eq!(set.choose(3), Some(vec![2]));
-        assert_eq!(set.choose(20), Some(vec![4, 2]));
-        assert_eq!(set.choose(31), Some(vec![4, 3, 2, 1, 0]));
-        assert_eq!(set.choose(32), None);
-        assert_eq!(set.choose(0), Some(vec![]));
+        assert_eq!(set.choose(1, 4), [0, 1, 2, 3, 4]);
+        assert_eq!(set.choose(3, 4), [2, 0, 1, 3, 4]);
+        assert_eq!(set.choose(20, 4), [4, 2, 0, 1, 3]);
+        assert_eq!(set.choose(31, 4), [4, 3, 2, 1, 0]);
+        assert_eq!(set.choose(0, 4), [0, 1, 2, 3, 4]);
+        assert_eq!(set.blocks(4), 31);
+    }
+
+    #[test]
+    fn unnamed_volumes_are_estimated_from_their_size() {
+        let v = Volume { file: 0, blocks: None, bytes: 1_200_000 };
+        // About 1,165,000 bytes of packets of 100,068 bytes.
+        assert_eq!(v.estimated_blocks(100_000), 11);
     }
 }

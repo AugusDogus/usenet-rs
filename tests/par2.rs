@@ -156,7 +156,7 @@ async fn posted_volumes_are_found_fetched_and_repair() {
     assert_eq!(found.len(), 1);
     let par2 = &found[0];
     assert_eq!(par2.base, "set");
-    assert_eq!(par2.blocks(), 8);
+    assert_eq!(par2.volumes.len(), 3);
     let fetch = async |file: usize| {
         let mut bytes = Vec::new();
         for segment in &nzb.files[file].segments {
@@ -164,11 +164,13 @@ async fn posted_volumes_are_found_fetched_and_repair() {
         }
         bytes
     };
-    let set = RecoverySet::parse(&fetch(par2.index.unwrap()).await).unwrap();
+    assert_eq!(nzb.files[par2.index].filename, "set.par2");
+    let set = RecoverySet::parse(&fetch(par2.index).await).unwrap();
+    assert_eq!(par2.blocks(set.slice_size()), 8);
     let a = set.file_named("a.bin").unwrap();
     let damaged: Vec<u32> = set.slices_in(a, 8000..8768).collect();
-    let chosen = par2.choose(damaged.len() as u32).unwrap();
-    assert_eq!(chosen.iter().map(|&f| nzb.files[f].filename.as_str()).collect::<Vec<_>>(), ["set.vol6+2.par2"]);
+    let chosen = par2.choose(damaged.len() as u32, set.slice_size());
+    assert_eq!(nzb.files[chosen[0]].filename, "set.vol6+2.par2");
 
     let mut scanner = Scanner::new(&set);
     for segment in &nzb.files[chosen[0]].segments {

@@ -67,11 +67,14 @@ When an article is gone from every server, the release's PAR2 files can rebuild 
 use usenet::par2::{Par2Files, RecoverySet, Scanner};
 
 let par2 = &Par2Files::find(&nzb)[0];
-let set = RecoverySet::parse(&fetch_file(par2.index.unwrap()).await?)?;
+let set = RecoverySet::parse(&fetch_file(par2.index).await?)?;
 let file = set.file_named("movie.part01.rar").unwrap();
 let damaged: Vec<u32> = set.slices_in(file, begin..end).collect();
 let mut scanner = Scanner::new(&set);
-for volume in par2.choose(damaged.len() as u32).unwrap() {
+for volume in par2.choose(damaged.len() as u32, set.slice_size()) {
+    if scanner.blocks().len() >= damaged.len() {
+        break;
+    }
     scanner.push(&fetch_file(volume).await?);
 }
 // Reads every other slice of the set, so the rest of the release must be on disk.
@@ -79,7 +82,8 @@ set.repair(&damaged, scanner.into_blocks(), read_slice, write_slice)?;
 ```
 
 `examples/resolve.rs` resolves NZBs against real servers and prints what it finds.
-`examples/priority.rs` measures how long a seek waits while a download runs.
+`examples/priority.rs` measures how long a seek waits while a download runs, and
+`examples/repair.rs` damages a downloaded release and repairs it from its PAR2 volumes.
 
 ## Testing
 
