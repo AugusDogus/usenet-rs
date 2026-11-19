@@ -21,6 +21,8 @@
 //!   and, like every request, go to an idle connection when one is open. They never queue
 //!   behind a background request on a connection, since replies come in order: with every
 //!   connection carrying background requests, an urgent one waits for the first to free up.
+//!   Nor do they queue behind each other while a connection carrying background requests
+//!   drains, so a burst of them spreads over the connections as they free up.
 //!
 //! # Head-of-line blocking
 //!
@@ -588,6 +590,9 @@ impl Pool {
         // The connection with the fewest in flight that has room, and a server to open one on.
         let mut best: Option<(usize, usize, usize)> = None;
         let mut to_open = None;
+        // A connection of the tier carries background requests, which end without more joining
+        // them while an urgent request waits.
+        let mut draining = false;
         for (i, (slot, state)) in self.inner.slots.iter().zip(states.iter()).enumerate() {
             // A server that refused a new connection still serves on those it has open.
             let backing_off = state.backoff_until.is_some_and(|t| t > now);
@@ -603,6 +608,7 @@ impl Pool {
                 // Replies come in order, so an urgent request queued behind a background one
                 // waits for it: it waits instead for a connection that frees up, which is never
                 // later, since background requests wait while it does.
+                draining |= conn.background > 0;
                 let usable = background || conn.background == 0;
                 if usable && conn.in_flight < depth && best.is_none_or(|(_, _, load)| conn.in_flight < load) {
                     best = Some((i, k, conn.in_flight));
@@ -624,7 +630,14 @@ impl Pool {
             states[i].opening += 1;
             self.open(i);
         }
-        let Some((i, k, _)) = best else { return Pick::Wait };
+        let Some((i, k, load)) = best else { return Pick::Wait };
+        // Nor does it queue behind another urgent request while a connection carrying background
+        // ones drains: on a link where each connection is slow, urgent requests stacked on the
+        // few connections free of background ones come back one by one, while the others free
+        // up in a fraction of an article each.
+        if !background && load > 0 && draining {
+            return Pick::Wait;
+        }
         let conn = &mut states[i].conns[k];
         conn.in_flight += 1;
         let _background = background.then(|| {
@@ -908,6 +921,38 @@ mod tests {
         let ((), urgent) = tokio::join!(background, urgent);
         // Behind the slow one it would take 3 s; the other connection is free well before.
         assert!(urgent < Duration::from_millis(1500), "{urgent:?}");
+    }
+
+    /// A connection sends its replies one after another, so on a link where each connection is
+    /// slow, urgent requests stacked on the one connection free of background requests come back
+    /// one by one. On a link like a Mac's, 105 connections at 0.5 MiB/s each and 25 MiB/s in all,
+    /// a repair's rounds of 7 and 25 urgent articles went 4 deep on a few connections, 9 s each.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn urgent_requests_spread_over_connections_that_free_up_rather_than_stack_on_one() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        let ids: Vec<&str> = posting.ids().collect();
+        let pool = Pool::new(vec![server.config(6, 0)]);
+        server.set_latency(Duration::from_millis(50));
+        futures_util::future::join_all(ids[..24].iter().map(|id| pool.body(id))).await;
+        assert_eq!(pool.stats().connections, 6);
+        server.set_latency(Duration::ZERO);
+        // About 0.25 s an article on each connection.
+        server.set_connection_rate(4_000);
+        // One background request on each of five connections; the sixth is free.
+        let background = futures_util::future::join_all(ids[24..29].iter().map(|id| pool.body(id)));
+        let seek = pool.with_priority(Priority::Urgent);
+        let urgent = async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let t = Instant::now();
+            futures_util::future::join_all(ids[29..35].iter().map(|id| seek.body(id))).await;
+            t.elapsed()
+        };
+        let (bodies, urgent) = tokio::join!(background, urgent);
+        assert!(bodies.iter().all(Result::is_ok));
+        // Stacked on the free connection the last would come after six articles, 1.5 s.
+        assert!(urgent < Duration::from_millis(1000), "{urgent:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
