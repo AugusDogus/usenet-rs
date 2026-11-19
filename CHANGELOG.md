@@ -16,7 +16,9 @@ Added:
   seek or a release's first reads. On a loopback server limited to 12 MiB/s with 100
   connections, pipeline 4 and a download running, a seek's article took 27 s before and
   about 0.35 s now (1.2 s instead of 27 s when each connection is also capped at 1 MiB/s),
-  with the link within 2.5% as full as before (`examples/priority.rs`).
+  with the link within 2.5% as full as before (`examples/priority.rs`). An urgent request
+  never queues behind a background one on a connection, since replies come in order: with
+  every connection carrying background requests, it waits for the first to free up.
 - `par2`: PAR2 2.0 recovery sets. `RecoverySet` parses an index or volume and checks slices
   against it; `slices_in` maps a missing byte range to slices; `Scanner` collects recovery
   blocks from volumes as their articles arrive; `Repair` rebuilds damaged slices by

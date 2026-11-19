@@ -18,7 +18,9 @@
 //!   most connections idle and most of the bandwidth for urgent requests, without slowing the
 //!   download.
 //! - Urgent requests are not limited, take a freed slot before any waiting background request,
-//!   and, like every request, go to an idle connection when one is open.
+//!   and, like every request, go to an idle connection when one is open. They never queue
+//!   behind a background request on a connection, since replies come in order: with every
+//!   connection carrying background requests, an urgent one waits for the first to free up.
 //!
 //! # Head-of-line blocking
 //!
@@ -159,6 +161,8 @@ struct Conn {
     jobs: mpsc::UnboundedSender<Job>,
     /// Commands sent to it whose replies have not been read.
     in_flight: usize,
+    /// Of those, background requests, which an urgent request does not queue behind.
+    background: usize,
 }
 
 #[derive(Default)]
@@ -258,14 +262,21 @@ struct Sent<'a> {
     _background: Option<Background<'a>>,
 }
 
-/// A background request's place under the limit, given back when dropped, even when the
-/// caller gives up on the request.
-struct Background<'a>(&'a PoolInner);
+/// A background request's place under the limit and on its connection, given back when
+/// dropped, even when the caller gives up on the request.
+struct Background<'a> {
+    pool: &'a PoolInner,
+    slot: usize,
+    conn: u64,
+}
 
 impl Drop for Background<'_> {
     fn drop(&mut self) {
-        self.0.background.fetch_sub(1, Ordering::SeqCst);
-        self.0.freed.notify_waiters();
+        self.pool.background.fetch_sub(1, Ordering::SeqCst);
+        if let Some(conn) = self.pool.states.lock()[self.slot].conns.iter_mut().find(|c| c.id == self.conn) {
+            conn.background = conn.background.saturating_sub(1);
+        }
+        self.pool.freed.notify_waiters();
     }
 }
 
@@ -589,7 +600,11 @@ impl Pool {
             }
             let depth = usize::from(slot.server.pipeline.get());
             for (k, conn) in state.conns.iter().enumerate() {
-                if conn.in_flight < depth && best.is_none_or(|(_, _, load)| conn.in_flight < load) {
+                // Replies come in order, so an urgent request queued behind a background one
+                // waits for it: it waits instead for a connection that frees up, which is never
+                // later, since background requests wait while it does.
+                let usable = background || conn.background == 0;
+                if usable && conn.in_flight < depth && best.is_none_or(|(_, _, load)| conn.in_flight < load) {
                     best = Some((i, k, conn.in_flight));
                 }
             }
@@ -613,8 +628,9 @@ impl Pool {
         let conn = &mut states[i].conns[k];
         conn.in_flight += 1;
         let _background = background.then(|| {
+            conn.background += 1;
             self.inner.background.fetch_add(1, Ordering::SeqCst);
-            Background(&self.inner)
+            Background { pool: &self.inner, slot: i, conn: conn.id }
         });
         Pick::Sent(Sent { slot: i, conn: conn.id, jobs: conn.jobs.clone(), _background })
     }
@@ -633,7 +649,7 @@ impl Pool {
                 Ok(session) => {
                     let id = pool.next_id.fetch_add(1, Ordering::Relaxed);
                     let (jobs, queue) = mpsc::unbounded_channel();
-                    state.conns.push(Conn { id, jobs, in_flight: 0 });
+                    state.conns.push(Conn { id, jobs, in_flight: 0, background: 0 });
                     drop(states);
                     tokio::spawn(session.drive(queue, Seat { pool: Arc::downgrade(&pool), slot: i, id }));
                 }
@@ -854,6 +870,44 @@ mod tests {
         );
         let order = order.into_inner();
         assert_eq!((order[0], order[1]), (0, 3), "{order:?}");
+    }
+
+    /// Replies come back in the order their commands went out, so an urgent request queued on a
+    /// connection behind a slow background one waits for it. A Mac whose 105 connections each
+    /// carried background articles took 36 s to fetch a repair's few urgent ones.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_urgent_request_waits_for_a_connection_without_background_requests_rather_than_queue_behind_one() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        let ids: Vec<&str> = posting.ids().collect();
+        let pool = Pool::new(vec![server.config(2, 0)]);
+        server.set_latency(Duration::from_millis(50));
+        futures_util::future::join_all(ids[..8].iter().map(|id| pool.body(id))).await;
+        assert_eq!(pool.stats().connections, 2);
+        server.set_latency(Duration::from_millis(100));
+        server.delay(ids[8], Duration::from_secs(3));
+        let background = async {
+            // The slow one takes the first connection; the others share both, two each.
+            let slow = pool.body(ids[8]);
+            let rest = async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                futures_util::future::join_all(ids[9..12].iter().map(|id| pool.body(id))).await
+            };
+            let (slow, rest) = tokio::join!(slow, rest);
+            slow.unwrap();
+            assert!(rest.iter().all(Result::is_ok));
+        };
+        let seek = pool.with_priority(Priority::Urgent);
+        let urgent = async {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            let t = Instant::now();
+            seek.body(ids[12]).await.unwrap();
+            t.elapsed()
+        };
+        let ((), urgent) = tokio::join!(background, urgent);
+        // Behind the slow one it would take 3 s; the other connection is free well before.
+        assert!(urgent < Duration::from_millis(1500), "{urgent:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
