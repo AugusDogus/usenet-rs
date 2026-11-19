@@ -117,6 +117,8 @@ struct Inner {
     state: Mutex<State>,
     /// Bytes per second across all connections; 0 is unlimited.
     rate: AtomicU64,
+    /// Bytes per second on each connection; 0 is unlimited.
+    connection_rate: AtomicU64,
     /// How long each BODY and STAT reply takes after its command arrives.
     latency: Mutex<Duration>,
     down: AtomicBool,
@@ -160,6 +162,7 @@ impl FakeServer {
         let inner = Arc::new(Inner {
             state: Mutex::default(),
             rate: AtomicU64::new(0),
+            connection_rate: AtomicU64::new(0),
             latency: Mutex::new(Duration::ZERO),
             down: AtomicBool::new(false),
             link_free: Mutex::new(Instant::now()),
@@ -249,6 +252,12 @@ impl FakeServer {
     /// Limits what all connections send together, in bytes per second. 0 is unlimited.
     pub fn set_rate(&self, bytes_per_second: u64) {
         self.inner.rate.store(bytes_per_second, Ordering::Relaxed);
+    }
+
+    /// Limits what each connection sends, in bytes per second, as providers that cap a
+    /// connection's speed do. 0 is unlimited. Applies on top of [`set_rate`](Self::set_rate).
+    pub fn set_connection_rate(&self, bytes_per_second: u64) {
+        self.inner.connection_rate.store(bytes_per_second, Ordering::Relaxed);
     }
 
     /// Delays each BODY and STAT reply by `latency` after its command arrives, as a distant
@@ -408,13 +417,15 @@ fn read_commands(
 }
 
 fn write_replies(inner: &Inner, mut out: TcpStream, queue: &mpsc::Receiver<Outgoing>, in_flight: &InFlight) {
+    // When this connection may next send, under its own rate limit.
+    let mut free = Instant::now();
     for reply in queue {
         std::thread::sleep(reply.due.saturating_duration_since(Instant::now()));
         let bytes = match reply.then {
             Then::Cut(at) => &reply.bytes[..at],
             Then::Continue | Then::Close => &reply.bytes[..],
         };
-        let sent = send(inner, &mut out, bytes);
+        let sent = send(inner, &mut out, bytes, &mut free);
         in_flight.0.fetch_sub(1, Ordering::SeqCst);
         if sent.is_err() || !matches!(reply.then, Then::Continue) {
             let _ = out.shutdown(Shutdown::Write);
@@ -423,18 +434,25 @@ fn write_replies(inner: &Inner, mut out: TcpStream, queue: &mpsc::Receiver<Outgo
     }
 }
 
-fn send(inner: &Inner, out: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()> {
+/// Writes `bytes` in chunks. Each chunk waits for its turn on this connection, which `free`
+/// says when it is next, and on the link all connections share, both at once.
+fn send(inner: &Inner, out: &mut TcpStream, bytes: &[u8], free: &mut Instant) -> std::io::Result<()> {
     for chunk in bytes.chunks(16 * 1024) {
+        let now = Instant::now();
+        let mut done = now;
+        let own = inner.connection_rate.load(Ordering::Relaxed);
+        if own > 0 {
+            *free = (*free).max(now) + Duration::from_secs_f64(chunk.len() as f64 / own as f64);
+            done = *free;
+        }
         let rate = inner.rate.load(Ordering::Relaxed);
         if rate > 0 {
             let cost = Duration::from_secs_f64(chunk.len() as f64 / rate as f64);
-            let done = {
-                let mut free = inner.link_free.lock();
-                *free = (*free).max(Instant::now()) + cost;
-                *free
-            };
-            std::thread::sleep(done.saturating_duration_since(Instant::now()));
+            let mut link = inner.link_free.lock();
+            *link = (*link).max(now) + cost;
+            done = done.max(*link);
         }
+        std::thread::sleep(done.saturating_duration_since(Instant::now()));
         out.write_all(chunk)?;
     }
     Ok(())

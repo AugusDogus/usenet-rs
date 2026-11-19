@@ -112,7 +112,7 @@ impl Job {
 enum Event {
     /// A command from the pool, or None once the pool lets go.
     Job(Option<Job>),
-    Read(Result<(), IoFailure>),
+    Read(Result<usize, IoFailure>),
     /// A reply is overdue.
     Silent,
 }
@@ -122,6 +122,9 @@ enum Event {
 pub(crate) trait Owner: Send + 'static {
     /// One reply came back, so one fewer command is in flight.
     fn answered(&self);
+
+    /// This many bytes of replies arrived.
+    fn received(&self, bytes: usize);
 }
 
 /// A connection that has logged in and is ready for commands.
@@ -212,11 +215,12 @@ impl Session {
         }
     }
 
-    /// Reads once, whatever has arrived. Cancel-safe: nothing is lost if it never finishes.
-    async fn fill(&mut self) -> Result<(), IoFailure> {
+    /// Reads once, whatever has arrived, and says how much. Cancel-safe: nothing is lost if
+    /// it never finishes.
+    async fn fill(&mut self) -> Result<usize, IoFailure> {
         match self.io.read_buf(self.replies.buffer()).await {
             Ok(0) => Err(IoFailure::Closed),
-            Ok(_) => Ok(()),
+            Ok(n) => Ok(n),
             Err(e) => Err(e.into()),
         }
     }
@@ -231,7 +235,7 @@ impl Session {
                 Err(violation) => return Err(self.protocol(violation)),
             }
             match timeout(IO_TIMEOUT, self.fill()).await {
-                Ok(Ok(())) => {}
+                Ok(Ok(_)) => {}
                 Ok(Err(failure)) => return Err(self.io_error(failure)),
                 Err(_) => return Err(self.io_error(IoFailure::TimedOut { seconds: IO_TIMEOUT.as_secs() })),
             }
@@ -307,7 +311,8 @@ impl Session {
                     }
                 }
                 Event::Read(Err(failure)) => break self.io_error(failure),
-                Event::Read(Ok(())) => {
+                Event::Read(Ok(bytes)) => {
+                    owner.received(bytes);
                     deadline = Instant::now() + IO_TIMEOUT;
                     if let Err(error) = self.answer(&mut waiting, &owner) {
                         break error;
@@ -383,6 +388,8 @@ pub(crate) mod tests {
         fn answered(&self) {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
+
+        fn received(&self, _: usize) {}
     }
 
     fn body(id: &str) -> (Job, oneshot::Receiver<Outcome<Vec<u8>>>) {

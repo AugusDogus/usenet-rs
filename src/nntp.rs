@@ -5,22 +5,36 @@
 //! each connection carries up to [`Server::pipeline`] commands at once, and their replies
 //! come back in the order the commands went out.
 //!
+//! # Priority
+//!
+//! A request is [`Urgent`](Priority::Urgent), for a seek or the first reads of a release
+//! about to play, or [`Background`](Priority::Background), for a download; a pool handle made
+//! by [`Pool::with_priority`] sends its requests at its priority. Requests in flight share
+//! the link, so an urgent one is fast only when few others stream beside it:
+//!
+//! - Background requests are held to a limit the pool tunes as it runs: the fewest in flight
+//!   that keep throughput within a few percent of the best it has seen (see
+//!   [`PoolStats::background_limit`]). On a link that a few connections fill, that leaves
+//!   most connections idle and most of the bandwidth for urgent requests, without slowing the
+//!   download.
+//! - Urgent requests are not limited, take a freed slot before any waiting background request,
+//!   and, like every request, go to an idle connection when one is open.
+//!
 //! # Head-of-line blocking
 //!
 //! A reply queued behind a slow one on the same connection waits for it. So a request goes
 //! to an idle connection when one is open, and a new connection is opened in the background
 //! when none is idle and the server allows more; only then does it queue behind others, on
-//! the connection with the fewest in flight. A seek while a download keeps every connection
-//! busy waits behind at most `pipeline - 1` articles, which is the price of keeping a
-//! connection's link busy across round trips. A pipeline of 1 never queues.
+//! the connection with the fewest in flight. A pipeline of 1 never queues.
 
 mod connection;
 mod error;
+mod limit;
 mod reply;
 
 use std::fmt;
 use std::num::NonZeroU8;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -30,6 +44,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use connection::{Job, Outcome, Owner, Session};
 pub use error::{ConnectFailure, IoFailure, NntpError};
+use limit::Limit;
 pub use reply::Violation;
 #[cfg(fuzzing)]
 #[doc(hidden)]
@@ -164,6 +179,19 @@ pub struct PoolStats {
     pub articles: u64,
     /// Connections open now, busy or idle.
     pub connections: u32,
+    /// The most background requests the pool lets be in flight now; see
+    /// [Priority](self#priority).
+    pub background_limit: u32,
+}
+
+/// How soon a request is needed. See [Priority](self#priority).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Priority {
+    /// Needed now: a seek, or the first reads of a release about to play.
+    Urgent,
+    /// Wanted soon: a download, or reading ahead. What [`Pool::new`] makes.
+    #[default]
+    Background,
 }
 
 /// Connections across servers. A request uses the best server, by priority, that has room
@@ -194,28 +222,74 @@ pub struct PoolStats {
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct Pool(Arc<PoolInner>);
+pub struct Pool {
+    inner: Arc<PoolInner>,
+    priority: Priority,
+}
 
 struct PoolInner {
     slots: Vec<Slot>,
     /// Each slot's connections, under one lock so a request picks among them atomically.
     states: Mutex<Vec<SlotState>>,
-    /// Signalled whenever a connection gets room, opens, or fails to open.
+    /// Signalled whenever a connection gets room, opens, or fails to open, and whenever a
+    /// background request may go where it could not before.
     freed: Notify,
+    /// Tunes how many background requests may be in flight.
+    limit: Mutex<Limit>,
+    /// The limit as last tuned.
+    allowed: AtomicUsize,
+    /// Background requests that hold a slot on a connection.
+    background: AtomicUsize,
+    /// Urgent requests waiting for a slot.
+    urgent_waiting: AtomicUsize,
     bytes: AtomicU64,
     articles: AtomicU64,
+    /// Bytes read from every connection, replies and all, for measuring the link.
+    received: AtomicU64,
     next_id: AtomicU64,
 }
 
 /// Where a request was sent.
-struct Sent {
+struct Sent<'a> {
     slot: usize,
     conn: u64,
     jobs: mpsc::UnboundedSender<Job>,
+    /// Held by a background request until it ends.
+    _background: Option<Background<'a>>,
 }
 
-enum Pick {
-    Sent(Sent),
+/// A background request's place under the limit, given back when dropped, even when the
+/// caller gives up on the request.
+struct Background<'a>(&'a PoolInner);
+
+impl Drop for Background<'_> {
+    fn drop(&mut self) {
+        self.0.background.fetch_sub(1, Ordering::SeqCst);
+        self.0.freed.notify_waiters();
+    }
+}
+
+/// Counts an urgent request as waiting for a slot while held.
+struct Counted<'a>(&'a AtomicUsize, &'a Notify);
+
+impl<'a> Counted<'a> {
+    fn new(count: &'a AtomicUsize, notify: &'a Notify) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count, notify)
+    }
+}
+
+impl Drop for Counted<'_> {
+    fn drop(&mut self) {
+        // The last urgent request to leave lets background requests go again.
+        if self.0.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.1.notify_waiters();
+        }
+    }
+}
+
+enum Pick<'a> {
+    Sent(Sent<'a>),
     /// Every usable connection is full; one may free up or open.
     Wait,
     /// Every server was tried or is refusing connections.
@@ -237,6 +311,12 @@ impl Owner for Seat {
         }
         pool.freed.notify_waiters();
     }
+
+    fn received(&self, bytes: usize) {
+        if let Some(pool) = self.pool.upgrade() {
+            pool.received.fetch_add(bytes as u64, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Drop for Seat {
@@ -245,6 +325,20 @@ impl Drop for Seat {
             pool.forget(self.slot, self.id);
         }
     }
+}
+
+/// The most requests the slots serve at once, connections times pipeline depth, of the
+/// largest priority tier.
+fn capacity(slots: &[Slot]) -> usize {
+    let mut tiers: Vec<(i32, usize)> = Vec::new();
+    for s in slots {
+        let room = usize::from(s.server.connections) * usize::from(s.server.pipeline.get());
+        match tiers.last_mut() {
+            Some((priority, total)) if *priority == s.server.priority => *total += room,
+            _ => tiers.push((s.server.priority, room)),
+        }
+    }
+    tiers.into_iter().map(|(_, total)| total).max().unwrap_or(0)
 }
 
 impl PoolInner {
@@ -259,31 +353,51 @@ impl Pool {
     pub fn new(mut servers: Vec<Server>) -> Self {
         servers.sort_by_key(|s| s.priority);
         let states = servers.iter().map(|_| SlotState::default()).collect();
-        let slots = servers.into_iter().map(|server| Slot { server, counters: Counters::default() }).collect();
-        Self(Arc::new(PoolInner {
+        let slots: Vec<Slot> =
+            servers.into_iter().map(|server| Slot { server, counters: Counters::default() }).collect();
+        let limit = Limit::new(capacity(&slots), Instant::now());
+        let allowed = AtomicUsize::new(limit.get());
+        let inner = Arc::new(PoolInner {
             slots,
             states: Mutex::new(states),
             freed: Notify::new(),
+            limit: Mutex::new(limit),
+            allowed,
+            background: AtomicUsize::new(0),
+            urgent_waiting: AtomicUsize::new(0),
             bytes: AtomicU64::new(0),
             articles: AtomicU64::new(0),
+            received: AtomicU64::new(0),
             next_id: AtomicU64::new(0),
-        }))
+        });
+        Self { inner, priority: Priority::Background }
+    }
+
+    /// A handle on the same connections whose requests go at `priority`.
+    pub fn with_priority(&self, priority: Priority) -> Self {
+        Self { inner: self.inner.clone(), priority }
+    }
+
+    /// The priority this handle's requests go at.
+    pub fn priority(&self) -> Priority {
+        self.priority
     }
 
     /// What the pool has fetched, and how many connections it holds.
     pub fn stats(&self) -> PoolStats {
-        let connections = self.0.states.lock().iter().map(|s| s.conns.len() as u32).sum();
+        let connections = self.inner.states.lock().iter().map(|s| s.conns.len() as u32).sum();
         PoolStats {
-            bytes: self.0.bytes.load(Ordering::Relaxed),
-            articles: self.0.articles.load(Ordering::Relaxed),
+            bytes: self.inner.bytes.load(Ordering::Relaxed),
+            articles: self.inner.articles.load(Ordering::Relaxed),
             connections,
+            background_limit: self.inner.allowed.load(Ordering::Relaxed) as u32,
         }
     }
 
     /// How each server has done, in priority order.
     pub fn report(&self) -> Vec<ServerReport> {
-        let states = self.0.states.lock();
-        self.0
+        let states = self.inner.states.lock();
+        self.inner
             .slots
             .iter()
             .zip(states.iter())
@@ -309,15 +423,7 @@ impl Pool {
     /// largest priority tier, since a lower tier is only asked for what the tiers above it
     /// lack. Running this many requests at a time keeps every connection busy.
     pub fn capacity(&self) -> usize {
-        let mut tiers: Vec<(i32, usize)> = Vec::new();
-        for s in &self.0.slots {
-            let room = usize::from(s.server.connections) * usize::from(s.server.pipeline.get());
-            match tiers.last_mut() {
-                Some((priority, total)) if *priority == s.server.priority => *total += room,
-                _ => tiers.push((s.server.priority, room)),
-            }
-        }
-        tiers.into_iter().map(|(_, total)| total).max().unwrap_or(0)
+        capacity(&self.inner.slots)
     }
 
     /// The article's body: dot-stuffing removed, lines kept with their CRLF, ready for yEnc.
@@ -326,8 +432,17 @@ impl Pool {
     /// [`NntpError::Unreachable`] when some server could not be asked.
     pub async fn body(&self, message_id: &str) -> Result<Vec<u8>, NntpError> {
         let body = self.run(message_id, |message_id, reply| Job::Body { message_id, reply }).await?;
-        self.0.bytes.fetch_add(body.len() as u64, Ordering::Relaxed);
-        self.0.articles.fetch_add(1, Ordering::Relaxed);
+        self.inner.bytes.fetch_add(body.len() as u64, Ordering::Relaxed);
+        self.inner.articles.fetch_add(1, Ordering::Relaxed);
+        let changed = {
+            let mut limit = self.inner.limit.lock();
+            let changed = limit.tick(self.inner.received.load(Ordering::Relaxed), Instant::now());
+            self.inner.allowed.store(limit.get(), Ordering::SeqCst);
+            changed
+        };
+        if changed {
+            self.inner.freed.notify_waiters();
+        }
         Ok(body)
     }
 
@@ -352,10 +467,10 @@ impl Pool {
         if !sendable(message_id) {
             return Err(NntpError::InvalidMessageId { message_id: message_id.to_string() });
         }
-        if self.0.slots.is_empty() {
+        if self.inner.slots.is_empty() {
             return Err(NntpError::NoServers { message_id: message_id.to_string() });
         }
-        let mut tried = vec![false; self.0.slots.len()];
+        let mut tried = vec![false; self.inner.slots.len()];
         let mut missing = false;
         let mut failures = 0;
         while let Some(sent) = self.acquire(&tried).await {
@@ -368,11 +483,11 @@ impl Pool {
                 })),
                 Err(_) => {
                     // The connection failed after it was picked.
-                    self.0.forget(sent.slot, sent.conn);
+                    self.inner.forget(sent.slot, sent.conn);
                     Outcome::Failed(NntpError::Io { server: self.label(sent.slot), failure: IoFailure::Closed })
                 }
             };
-            let counters = &self.0.slots[sent.slot].counters;
+            let counters = &self.inner.slots[sent.slot].counters;
             let took = asked.elapsed();
             if took >= SLOW {
                 counters.slow.fetch_add(1, Ordering::Relaxed);
@@ -393,14 +508,14 @@ impl Pool {
                 Outcome::Dropped => continue,
             };
             counters.failed.fetch_add(1, Ordering::Relaxed);
-            self.0.states.lock()[sent.slot].last_error = Some(error);
+            self.inner.states.lock()[sent.slot].last_error = Some(error);
             failures += 1;
             if failures >= 2 {
                 tried[sent.slot] = true;
                 failures = 0;
             }
         }
-        let errors: Vec<NntpError> = self.0.states.lock().iter().filter_map(|s| s.last_error.clone()).collect();
+        let errors: Vec<NntpError> = self.inner.states.lock().iter().filter_map(|s| s.last_error.clone()).collect();
         if missing && errors.is_empty() {
             Err(NntpError::Missing { message_id: message_id.to_string() })
         } else {
@@ -412,8 +527,8 @@ impl Pool {
     /// stays reported until its backoff ends, even while open connections work.
     fn answered(&self, slot: usize, count: &AtomicU64, took: Duration) {
         count.fetch_add(1, Ordering::Relaxed);
-        self.0.slots[slot].counters.millis.fetch_add(took.as_millis() as u64, Ordering::Relaxed);
-        let mut states = self.0.states.lock();
+        self.inner.slots[slot].counters.millis.fetch_add(took.as_millis() as u64, Ordering::Relaxed);
+        let mut states = self.inner.states.lock();
         let state = &mut states[slot];
         if state.backoff_until.is_none_or(|t| t <= Instant::now()) {
             state.last_error = None;
@@ -421,7 +536,7 @@ impl Pool {
     }
 
     fn label(&self, slot: usize) -> String {
-        let server = &self.0.slots[slot].server;
+        let server = &self.inner.slots[slot].server;
         format!("{}:{}", server.host, server.port)
     }
 
@@ -429,9 +544,11 @@ impl Pool {
     /// that has one: a busy tier is waited for rather than skipped, so backup servers only see
     /// articles the servers above them lack, or requests while those servers are refusing
     /// connections. None once every server was tried.
-    async fn acquire(&self, tried: &[bool]) -> Option<Sent> {
+    async fn acquire(&self, tried: &[bool]) -> Option<Sent<'_>> {
+        let _waiting =
+            (self.priority == Priority::Urgent).then(|| Counted::new(&self.inner.urgent_waiting, &self.inner.freed));
         loop {
-            let freed = self.0.freed.notified();
+            let freed = self.inner.freed.notified();
             tokio::pin!(freed);
             freed.as_mut().enable();
             match self.pick(tried) {
@@ -442,14 +559,25 @@ impl Pool {
         }
     }
 
-    fn pick(&self, tried: &[bool]) -> Pick {
+    fn pick(&self, tried: &[bool]) -> Pick<'_> {
         let now = Instant::now();
-        let mut states = self.0.states.lock();
+        let mut states = self.inner.states.lock();
+        let background = self.priority == Priority::Background;
+        if background {
+            // Urgent requests take freed slots first.
+            if self.inner.urgent_waiting.load(Ordering::SeqCst) > 0 {
+                return Pick::Wait;
+            }
+            if self.inner.background.load(Ordering::SeqCst) >= self.inner.allowed.load(Ordering::SeqCst) {
+                self.inner.limit.lock().bound();
+                return Pick::Wait;
+            }
+        }
         let mut tier = None;
         // The connection with the fewest in flight that has room, and a server to open one on.
         let mut best: Option<(usize, usize, usize)> = None;
         let mut to_open = None;
-        for (i, (slot, state)) in self.0.slots.iter().zip(states.iter()).enumerate() {
+        for (i, (slot, state)) in self.inner.slots.iter().zip(states.iter()).enumerate() {
             // A server that refused a new connection still serves on those it has open.
             let backing_off = state.backoff_until.is_some_and(|t| t > now);
             if tried[i] || (backing_off && state.conns.is_empty() && state.opening == 0) {
@@ -484,13 +612,17 @@ impl Pool {
         let Some((i, k, _)) = best else { return Pick::Wait };
         let conn = &mut states[i].conns[k];
         conn.in_flight += 1;
-        Pick::Sent(Sent { slot: i, conn: conn.id, jobs: conn.jobs.clone() })
+        let _background = background.then(|| {
+            self.inner.background.fetch_add(1, Ordering::SeqCst);
+            Background(&self.inner)
+        });
+        Pick::Sent(Sent { slot: i, conn: conn.id, jobs: conn.jobs.clone(), _background })
     }
 
     /// Opens a connection to slot `i` in the background, then wakes waiting requests. The
     /// caller has counted it in `opening`.
     fn open(&self, i: usize) {
-        let pool = self.0.clone();
+        let pool = self.inner.clone();
         tokio::spawn(async move {
             let slot = &pool.slots[i];
             let opened = Session::open(&slot.server).await;
@@ -667,6 +799,60 @@ mod tests {
         let bodies = futures_util::future::join_all(ids[6..14].iter().map(|id| pool.body(id))).await;
         assert!(bodies.iter().all(Result::is_ok), "{bodies:?}");
         assert_eq!(server.logins(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn background_requests_wait_for_the_limit_and_urgent_ones_do_not() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        server.set_latency(Duration::from_millis(200));
+        let pool = Pool::new(vec![server.config(8, 0)]);
+        assert_eq!(pool.priority(), Priority::Background);
+        let limit = pool.stats().background_limit as usize;
+        assert!(limit < pool.capacity(), "{limit}");
+        let ids: Vec<&str> = posting.ids().collect();
+        let started = Instant::now();
+        let background = futures_util::future::join_all(ids[..4 * limit].iter().map(|id| pool.body(id)));
+        let seek = pool.with_priority(Priority::Urgent);
+        let urgent = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let t = Instant::now();
+            seek.body(ids[4 * limit]).await.unwrap();
+            t.elapsed()
+        };
+        let (bodies, urgent) = tokio::join!(background, urgent);
+        assert!(bodies.iter().all(Result::is_ok));
+        // Four rounds for the background requests, at most two for the urgent one.
+        assert!(started.elapsed() >= Duration::from_millis(780), "{:?}", started.elapsed());
+        assert!(urgent < Duration::from_millis(500), "{urgent:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_urgent_request_takes_the_next_free_slot_before_waiting_background_ones() {
+        let server = FakeServer::start();
+        let posting = posting();
+        server.add(&posting);
+        server.set_latency(Duration::from_millis(100));
+        let mut config = server.config(1, 0);
+        config.pipeline = NonZeroU8::MIN;
+        let pool = Pool::new(vec![config]);
+        let ids: Vec<&str> = posting.ids().collect();
+        let order = Mutex::new(Vec::new());
+        let fetch = async |pool: Pool, k: usize, after: u64| {
+            tokio::time::sleep(Duration::from_millis(after)).await;
+            pool.body(ids[k]).await.unwrap();
+            order.lock().push(k);
+        };
+        let seek = pool.with_priority(Priority::Urgent);
+        tokio::join!(
+            fetch(pool.clone(), 0, 0),
+            fetch(pool.clone(), 1, 10),
+            fetch(pool.clone(), 2, 10),
+            fetch(seek, 3, 30)
+        );
+        let order = order.into_inner();
+        assert_eq!((order[0], order[1]), (0, 3), "{order:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
