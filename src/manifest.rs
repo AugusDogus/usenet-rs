@@ -35,6 +35,21 @@ pub struct Manifest {
     pub packing: Packing,
     /// The files, RAR contents first, then files posted as they are.
     pub files: Vec<OutputFile>,
+    /// Posted files whose names do not end in `.par2` but whose first article holds PAR2
+    /// packets, as the resolver read them: a release posted under obfuscated names. See
+    /// [`Par2Files::find_resolved`](crate::par2::Par2Files::find_resolved).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub par2: Vec<Par2Posted>,
+}
+
+/// A posted file that holds PAR2 packets, recognized by its first article.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Par2Posted {
+    /// The file's position in [`Nzb::files`](crate::Nzb::files).
+    pub file: usize,
+    /// The recovery set its first packet belongs to, which tells one set's files from
+    /// another's, such as a sample's.
+    pub set: [u8; 16],
 }
 
 /// How a release's files were posted.
@@ -376,6 +391,7 @@ mod tests {
             title: "t".into(),
             packing: Packing::Direct,
             files: vec![OutputFile { path: path.into(), size, pieces }],
+            par2: Vec::new(),
         }
     }
 
@@ -454,6 +470,7 @@ mod tests {
                 OutputFile { path: "Sample/s.mkv".into(), size: 1_000, pieces: posted.pieces(50, 1_000, 0) },
                 OutputFile { path: "Film.2024.mkv".into(), size: 2_000, pieces: posted.pieces(1_100, 2_000, 0) },
             ],
+            par2: Vec::new(),
         }
         .to_bytes();
         let numbers: [&[u8]; 4] = [b"18446744073709551615", b"18446744073709551616", b"-1", b"0"];

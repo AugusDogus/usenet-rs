@@ -8,7 +8,7 @@ use std::ops::Range;
 use futures_util::future::join_all;
 
 use crate::article::{self, ArticleError};
-use crate::manifest::{Manifest, OutputFile, Packing, Posted, RarFormat};
+use crate::manifest::{Manifest, OutputFile, Packing, Par2Posted, Posted, RarFormat};
 use crate::nntp::Pool;
 use crate::nzb::{Nzb, NzbFile};
 use crate::rar::{self, Format, RarError, ScanError, Volume};
@@ -169,6 +169,16 @@ impl std::error::Error for ResolveError {
 const SKIPPED: [&str; 5] = [".par2", ".sfv", ".srr", ".srs", ".nzb"];
 const PAR2: &[u8] = b"PAR2\0PKT";
 
+/// What a posted file's first article says it is.
+enum Probe<'a> {
+    /// A file to resolve.
+    File(Probed<'a>),
+    /// PAR2 packets of the recovery set with this ID.
+    Par2([u8; 16]),
+    /// Nothing was posted for it.
+    Empty,
+}
+
 struct Probed<'a> {
     file: &'a NzbFile,
     /// Its place in the NZB.
@@ -212,14 +222,16 @@ impl Probed<'_> {
     }
 }
 
-async fn probe<'a>(pool: &Pool, index: usize, file: &'a NzbFile) -> Result<Option<Probed<'a>>, ResolveError> {
+async fn probe<'a>(pool: &Pool, index: usize, file: &'a NzbFile) -> Result<Probe<'a>, ResolveError> {
     let label = || label(file, index);
-    let Some(first) = file.segments.first() else { return Ok(None) };
+    let Some(first) = file.segments.first() else { return Ok(Probe::Empty) };
     let part = article::fetch(pool, &first.message_ids)
         .await
         .map_err(|error| ResolveError::Article { file: label(), error })?;
     if part.data.starts_with(PAR2) {
-        return Ok(None);
+        // A packet's header: magic, length, its MD5, then the recovery set's ID.
+        let set = part.data.get(32..48).and_then(|id| <[u8; 16]>::try_from(id).ok());
+        return Ok(set.map_or(Probe::Empty, Probe::Par2));
     }
     let layout = |error| Err(ResolveError::Layout { file: label(), error });
     if part.begin != 0 {
@@ -232,7 +244,7 @@ async fn probe<'a>(pool: &Pool, index: usize, file: &'a NzbFile) -> Result<Optio
         return layout(LayoutError::ArticleCount { file_size: part.file_size, part_size, implied, listed });
     }
     let ids = file.segments.iter().map(|s| s.message_ids.clone()).collect();
-    Ok(Some(Probed { file, index, name: part.name, size: part.file_size, part_size, head: part.data, ids }))
+    Ok(Probe::File(Probed { file, index, name: part.name, size: part.file_size, part_size, head: part.data, ids }))
 }
 
 fn container_extension(head: &[u8]) -> Option<&'static str> {
@@ -399,7 +411,8 @@ fn rar_files(
 
 /// Resolves the release an NZB describes. Reads one article per posted file, plus a small
 /// window wherever a RAR volume has a header past its first article; file data is never
-/// fetched. PAR2, SFV, SRR, SRS and nested NZB files are left out.
+/// fetched. PAR2, SFV, SRR, SRS and nested NZB files are left out; files whose names hide that
+/// they are PAR2 files are listed in [`Manifest::par2`].
 ///
 /// Files posted as they are map directly. Files stored in RAR volumes map onto the data
 /// inside the volumes, in volume order; compressed or encrypted archives are reported as
@@ -442,13 +455,15 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
         .iter()
         .enumerate()
         .filter(|(_, f)| !SKIPPED.iter().any(|ext| f.filename.to_ascii_lowercase().ends_with(ext)));
-    let probes = join_all(candidates.map(|(i, f)| probe(pool, i, f))).await;
+    let probes = join_all(candidates.map(|(i, f)| async move { (i, probe(pool, i, f).await) })).await;
     let mut probed = Vec::new();
+    let mut par2 = Vec::new();
     let mut failed = None;
-    for p in probes {
+    for (file, p) in probes {
         match p {
-            Ok(Some(p)) => probed.push(p),
-            Ok(None) => {}
+            Ok(Probe::File(p)) => probed.push(p),
+            Ok(Probe::Par2(set)) => par2.push(Par2Posted { file, set }),
+            Ok(Probe::Empty) => {}
             Err(e) => {
                 failed.get_or_insert(e);
             }
@@ -498,7 +513,7 @@ pub async fn resolve(nzb: &Nzb, pool: &Pool) -> Result<Manifest, ResolveError> {
         return Err(failed.unwrap_or(ResolveError::Empty));
     }
     let release_id = nzb.id.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(Manifest { release_id, title, packing, files })
+    Ok(Manifest { release_id, title, packing, files, par2 })
 }
 
 #[cfg(test)]
@@ -542,6 +557,42 @@ mod tests {
         let manifest = resolve(&Nzb::parse(&posting.nzb).unwrap(), &pool).await.unwrap();
         assert_eq!((manifest.title.as_str(), manifest.packing), ("Set", Packing::Direct));
         assert_eq!(read_back(&manifest, &pool).await, [("a.bin".into(), a), ("b.bin".into(), b)]);
+    }
+
+    /// Posters hide every name, so nothing says `.par2`; a PAR2 file's first article starts
+    /// with its packet magic and names its recovery set.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn par2_files_posted_under_obfuscated_names_are_found_by_their_first_article() {
+        use crate::fake::{FakeServer, Posting};
+        use crate::par2::Par2Files;
+        let (a, sample) = (data(25_000, 1), data(4_000, 2));
+        let par2 = crate::fake::par2("set", &[("a.bin", &a)], 4_000, 3);
+        let sample_par2 = crate::fake::par2("sample", &[("s.bin", &sample)], 1_000, 1);
+        let mut posted: Vec<(String, &[u8])> = vec![("8c1f0a".into(), &a), ("e3b0c4".into(), &sample)];
+        for (k, (_, bytes)) in par2.iter().chain(&sample_par2).enumerate() {
+            posted.push((format!("{:06x}", 0x5a17 * (k + 1)), bytes));
+        }
+        let files: Vec<(&str, &[u8])> = posted.iter().map(|(n, b)| (n.as_str(), *b)).collect();
+        let posting = Posting::new("Set", &files, 4_000);
+        let server = FakeServer::start();
+        server.add(&posting);
+        let pool = Pool::new(vec![server.config(4, 0)]);
+        let nzb = Nzb::parse(&posting.nzb).unwrap();
+        assert!(Par2Files::find(&nzb).is_empty(), "no name says .par2");
+        let manifest = resolve(&nzb, &pool).await.unwrap();
+        assert_eq!(manifest.files.len(), 2, "{:?}", manifest.files);
+        assert_eq!(
+            manifest.par2.iter().map(|p| p.file).collect::<Vec<_>>(),
+            (2..2 + par2.len() + sample_par2.len()).collect::<Vec<_>>()
+        );
+        let sets = Par2Files::find_resolved(&nzb, &manifest);
+        assert_eq!(sets.len(), 2, "the film's set and the sample's: {sets:?}");
+        // The film's set first, read from its smallest file, the index.
+        assert_eq!(sets[0].files().collect::<Vec<_>>().len(), par2.len());
+        assert_eq!(sets[0].index, 2);
+        let read = crate::par2::RecoverySet::parse(&par2[0].1).unwrap();
+        assert_eq!(manifest.par2[0].set, read.id());
+        assert_eq!(Manifest::from_bytes(&manifest.to_bytes()).unwrap(), manifest);
     }
 
     #[tokio::test(flavor = "multi_thread")]

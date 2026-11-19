@@ -1,5 +1,6 @@
 //! Which of an NZB's files hold a recovery set, and which of them to fetch.
 
+use crate::manifest::{Manifest, Par2Posted};
 use crate::nzb::Nzb;
 
 /// Bytes a recovery packet adds to its slice: the header and the exponent.
@@ -33,9 +34,9 @@ impl Volume {
 /// index, and `name.vol7+8.par2` or `name.vol-07.par2` for volumes, as par2cmdline, MultiPar
 /// and posters name them.
 ///
-/// A release posted under obfuscated names has no `.par2` names to find; recognize its PAR2
-/// files by content instead, with [`RecoverySet::parse`](super::RecoverySet::parse) on their
-/// first article.
+/// A release posted under obfuscated names has no `.par2` names to find; the resolver
+/// recognizes its PAR2 files by their first article instead, which
+/// [`Par2Files::find_resolved`] reads.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Par2Files {
     /// The name the files share, before `.par2` or `.vol...par2`.
@@ -79,6 +80,35 @@ impl Par2Files {
             .collect();
         found.sort_by_key(|s| std::cmp::Reverse(s.volumes.iter().map(|v| v.bytes).sum::<u64>()));
         found
+    }
+
+    /// The PAR2 sets an NZB posts, by name as [`Par2Files::find`] finds them, and those the
+    /// resolver recognized by content ([`Manifest::par2`]), grouped by recovery set, largest
+    /// first. A set found by content has no names to say which file is the index or how many
+    /// blocks a volume holds, so each of its files is a volume whose blocks are estimated from
+    /// its size, and the smallest is read for the set's description.
+    pub fn find_resolved(nzb: &Nzb, manifest: &Manifest) -> Vec<Par2Files> {
+        let mut found = Self::find(nzb);
+        let mut sets: Vec<([u8; 16], Vec<Volume>)> = Vec::new();
+        for &Par2Posted { file, set } in &manifest.par2 {
+            let Some(posted) = nzb.files.get(file) else { continue };
+            let volume = Volume { file, blocks: None, bytes: posted.segments.iter().map(|s| s.bytes).sum() };
+            match sets.iter_mut().find(|(id, _)| *id == set) {
+                Some((_, volumes)) => volumes.push(volume),
+                None => sets.push((set, vec![volume])),
+            }
+        }
+        for (_, volumes) in sets {
+            let Some(index) = volumes.iter().min_by_key(|v| v.bytes).map(|v| v.file) else { continue };
+            found.push(Par2Files { base: nzb.files[index].filename.clone(), index, volumes });
+        }
+        found.sort_by_key(|s| std::cmp::Reverse(s.volumes.iter().map(|v| v.bytes).sum::<u64>()));
+        found
+    }
+
+    /// Every file of the set, the index and the volumes, as positions in [`Nzb::files`].
+    pub fn files(&self) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(self.index).chain(self.volumes.iter().map(|v| v.file).filter(move |&f| f != self.index))
     }
 
     /// Recovery blocks across all volumes, by name or estimate; see

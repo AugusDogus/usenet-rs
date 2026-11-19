@@ -28,6 +28,10 @@ Added:
   and orders the volumes to fetch for enough blocks. `RecoverySet::file_starting` matches a
   posted file to the set by its size and first article, since posters rename files.
   `examples/repair.rs` repairs a real release this way.
+- `Manifest::par2` lists the posted files whose names hide that they are PAR2 files, as the
+  resolver recognized them by their first article, with each one's recovery set, and
+  `Par2Files::find_resolved` finds their sets beside those found by name. A manifest without
+  any writes no `par2` field, so manifests stay readable by 0.2.
 - The `fake` server can cap each connection's speed (`FakeServer::set_connection_rate`), serve
   an article cut short before its trailer (`FakeServer::damage`), `fake::par2` writes PAR2
   files to post with a release, and `fake::rar_volumes` gives the volumes `Posting::stored_rar`
