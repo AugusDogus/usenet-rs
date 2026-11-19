@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+Breaking changes:
+
+- The pool holds background requests to a limit it tunes as it runs: the fewest in flight
+  that keep throughput within 3% of the best it has measured lately. A download that starts
+  `Pool::capacity` requests now has only that many in flight; the rest wait their turn.
+  `PoolStats` has a `background_limit` field that reports it.
+
+Added:
+
+- Request priority. `Pool::with_priority(Priority::Urgent)` makes a handle on the same
+  connections whose requests skip the background limit and take freed slots first, for a
+  seek or a release's first reads. On a loopback server limited to 12 MiB/s with 100
+  connections, pipeline 4 and a download running, a seek's article took 27 s before and
+  about 0.35 s now (1.2 s instead of 27 s when each connection is also capped at 1 MiB/s),
+  with the link within 2.5% as full as before (`examples/priority.rs`).
+- `par2`: PAR2 2.0 recovery sets. `RecoverySet` parses an index or volume and checks slices
+  against it; `slices_in` maps a missing byte range to slices; `Scanner` collects recovery
+  blocks from volumes as their articles arrive; `Repair` rebuilds damaged slices by
+  Reed-Solomon over GF(2^16), with SSSE3, AVX2 or NEON, as every other slice of the set is
+  fed to it; `RecoverySet::repair` does the same through a reader and a writer;
+  `Par2Files` finds an NZB's PAR2 files and picks the volumes that hold enough blocks.
+- The `fake` server can cap each connection's speed (`FakeServer::set_connection_rate`), and
+  `fake::par2` writes PAR2 files to post with a release.
+- Criterion benches for PAR2 checking, scanning and repair, and a cargo-fuzz target for it.
+
 ## 0.2.0
 
 Breaking changes:

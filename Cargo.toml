@@ -1,13 +1,13 @@
 [package]
 name = "usenet"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-description = "Reads Usenet releases as files: NNTP, yEnc, NZB, and stored RAR layouts"
+description = "Reads Usenet releases as files: NNTP, yEnc, NZB, stored RAR layouts, and PAR2 repair"
 repository = "https://github.com/AugusDogus/usenet-rs"
 readme = "README.md"
-keywords = ["usenet", "nntp", "yenc", "nzb", "rar"]
+keywords = ["usenet", "nntp", "yenc", "nzb", "par2"]
 categories = ["network-programming", "parser-implementations", "encoding"]
 exclude = ["/fuzz", "/.github"]
 
@@ -62,7 +62,7 @@ required-features = ["fake"]
 
 [lints.rust]
 # cargo-fuzz builds with `--cfg fuzzing`, which exposes the NNTP reply parser and skips RAR
-# header checksums.
+# header checksums and PAR2 packet hashes.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [[example]]
