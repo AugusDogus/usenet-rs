@@ -27,8 +27,9 @@ Added:
   posted file to the set by its size and first article, since posters rename files.
   `examples/repair.rs` repairs a real release this way.
 - The `fake` server can cap each connection's speed (`FakeServer::set_connection_rate`), serve
-  an article cut short before its trailer (`FakeServer::damage`), and
-  `fake::par2` writes PAR2 files to post with a release.
+  an article cut short before its trailer (`FakeServer::damage`), `fake::par2` writes PAR2
+  files to post with a release, and `fake::rar_volumes` gives the volumes `Posting::stored_rar`
+  posts, to protect with them.
 - Criterion benches for PAR2 checking, scanning and repair, and a cargo-fuzz target for it.
 
 ## 0.2.0

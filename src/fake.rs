@@ -77,18 +77,7 @@ impl Posting {
     /// Stores `data` as `name` in RAR5 volumes holding at most `volume_data` bytes of it each,
     /// posted as `{title}.partNN.rar`, with a 1 KB sample stored ahead of it in the first.
     pub fn stored_rar(title: &str, name: &str, data: &[u8], volume_data: usize, part_size: usize) -> Self {
-        use crate::rar::fixtures::{File, rar5};
-        let chunks: Vec<&[u8]> = data.chunks(volume_data).collect();
-        let mut volumes = Vec::new();
-        for (i, chunk) in chunks.iter().enumerate() {
-            let split = (if i > 0 { 0x8 } else { 0 }) | (if i + 1 < chunks.len() { 0x10 } else { 0 });
-            let movie = File { name, data: chunk.len() as u64, split, method: 0, unpacked: data.len() as u64 };
-            let sample = File { name: "Sample/sample.mkv", data: 1024, split: 0, method: 0, unpacked: 1024 };
-            let mut volume = if i == 0 { rar5(0, &[sample, movie], 0x5a) } else { rar5(i as u64, &[movie], 0) };
-            let at = volume.len() - chunk.len();
-            volume[at..].copy_from_slice(chunk);
-            volumes.push((format!("{title}.part{:02}.rar", i + 1), volume));
-        }
+        let volumes = rar_volumes(title, name, data, volume_data);
         let files: Vec<(&str, &[u8])> = volumes.iter().map(|(n, v)| (n.as_str(), v.as_slice())).collect();
         Self::new(title, &files, part_size)
     }
@@ -97,6 +86,24 @@ impl Posting {
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.articles.iter().map(|(id, _)| id.as_str())
     }
+}
+
+/// The RAR5 volumes [`Posting::stored_rar`] posts, named as it names them, to post with other
+/// files, such as the PAR2 files of [`par2`] that protect them.
+pub fn rar_volumes(title: &str, name: &str, data: &[u8], volume_data: usize) -> Vec<(String, Vec<u8>)> {
+    use crate::rar::fixtures::{File, rar5};
+    let chunks: Vec<&[u8]> = data.chunks(volume_data).collect();
+    let mut volumes = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let split = (if i > 0 { 0x8 } else { 0 }) | (if i + 1 < chunks.len() { 0x10 } else { 0 });
+        let movie = File { name, data: chunk.len() as u64, split, method: 0, unpacked: data.len() as u64 };
+        let sample = File { name: "Sample/sample.mkv", data: 1024, split: 0, method: 0, unpacked: 1024 };
+        let mut volume = if i == 0 { rar5(0, &[sample, movie], 0x5a) } else { rar5(i as u64, &[movie], 0) };
+        let at = volume.len() - chunk.len();
+        volume[at..].copy_from_slice(chunk);
+        volumes.push((format!("{title}.part{:02}.rar", i + 1), volume));
+    }
+    volumes
 }
 
 fn escape(text: &str) -> String {
